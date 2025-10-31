@@ -1,0 +1,48 @@
+{
+  "name": "wolo-inventory",
+  "version": "1.0.0",
+  "description": "Offline-first inventory management for pharmaceutical shops",
+  "main": "main.js",
+  "author": {
+    "name": "Ashong Aaron Nii Nortey",
+    "email": "aaronashong111@gmail.com"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "cross-env NODE_ENV=development electron .",
+    "dev": "cross-env NODE_ENV=development DEBUG_PROD=true electron .",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.2.2",
+    "bootstrap": "^5.3.8",
+    "exceljs": "^4.4.0",
+    "jquery": "^3.7.1",
+    "jquery-ui-dist": "^1.13.3",
+    "nodemailer": "^6.9.7",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.wolo-pharmacy.app",
+    "win": {
+      "target": "nsis",
+      "icon": "WOLO-PHARMACY.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "extraResources": [
+      {
+        "from": "WOLO-PHARMACY.ico",
+        "to": "WOLO-PHARMACY.ico"
+      }
+    ]
+  }
+}

@@ -1,0 +1,203 @@
+# Wolo Inventory Management System
+
+A cross-platform desktop inventory management application designed specifically for pharmaceutical shop owners. Built with Electron.js for Windows, macOS, and Linux.
+
+**Developed by:** Ashong Aaron Nii Nortey  
+**Contact:** aaronashong111@gmail.com  
+**License:** MIT
+
+## Features
+
+### Core Functionality
+- **Product Management**: Add, edit, and remove products with automatic calculations
+- **Profit Calculations**: Automatic computation of selling price and marginal profit based on bulk purchase data
+- **Inventory Tracking**: Track quantity in stock and quantity on shelf separately
+- **Expiry & Stock Alerts**: Identify products expiring soon (within 30 days) or low in stock
+- **Advanced Filtering**: Search and filter inventory by name, category, stock level, and expiry status
+
+### Reporting & Export
+- **Excel Export**: Generate .xlsx reports with full product details
+- **Custom Reports**: Export all products, low stock items, expiring soon, or expired products
+- **Email Integration**: Send reports via email directly from the app using SMTP
+
+### Data Management
+- **Offline-First**: All data stored locally using SQLite - no internet required
+- **Automatic Calculations**: Unit cost, selling price, profit margins, and stock values calculated automatically
+- **Settings Management**: Configure SMTP settings for email functionality
+
+### Activation System
+- **One-Time Activation**: App requires activation password to use
+- **Secure Access**: Only users with the activation password can use the app
+- **Developer Control**: Activation password provided by developer
+
+## Installation
+
+### Prerequisites
+- Node.js (v16 or higher)
+- npm or yarn
+
+### Setup
+
+1. **Install Dependencies**
+```bash
+npm install
+```
+
+2. **Run the Application**
+```bash
+npm start
+```
+
+3. **Build for Production**
+```bash
+npm run build
+```
+
+This will create installers for your platform in the `dist` folder.
+
+## Usage
+
+### Adding a Product
+
+1. Navigate to "Add Product" from the sidebar
+2. Fill in the required fields:
+   - **Product Name** (required)
+   - **Total Bulk Cost** (required): The amount spent to purchase in bulk
+   - **Quantity Purchased** (required): Number of units purchased from the bulk
+   - **Profit Margin %** (required): Desired profit percentage
+   - **Quantity in Stock**: Available in store but not on shelf
+   - **Quantity on Shelf**: Available to customers
+   - **Manufactured Date** (required)
+   - **Expiry Date** (required)
+3. The system automatically calculates:
+   - Unit Cost Price = Total Bulk Cost ÷ Quantity Purchased
+   - Selling Price = Unit Cost + (Unit Cost × Profit Margin)
+   - Marginal Profit = Selling Price - Unit Cost
+
+### Managing Products
+
+- **View All Products**: Click "Products" in the sidebar
+- **Search**: Use the search bar to find products by name or barcode
+- **Filter**: Use dropdown filters for category, stock level, or expiry status
+- **Edit**: Click the edit button (pencil icon) on any product
+- **Delete**: Click the delete button (trash icon) to remove a product
+
+### Generating Reports
+
+1. Navigate to "Reports" from the sidebar
+2. Select report type:
+   - All Products
+   - Low Stock Items
+   - Expiring Soon (within 30 days)
+   - Expired Products
+3. Click "Generate & Download Excel" to export
+
+### Sending Email Reports
+
+1. First, configure SMTP settings in "Settings"
+2. Go to "Reports" page
+3. Select report type
+4. Enter recipient email, subject, and message
+5. Click "Send Email"
+
+### SMTP Configuration
+
+For Gmail:
+- **Host**: smtp.gmail.com
+- **Port**: 587
+- **Email**: your-email@gmail.com
+- **Password**: Your app password (not regular password)
+- **SSL/TLS**: Checked
+
+**Note**: For Gmail, you need to generate an "App Password" from your Google Account settings.
+
+### App Activation
+
+1. When you first open the app, an activation modal will appear
+2. Enter the activation password: **Ashinting@1st**
+3. Click "Activate"
+4. The app will unlock and you can start using it
+
+**Note:** The activation is permanent - you only need to do this once per installation.
+
+**For activation support, contact:** aaronashong111@gmail.com
+
+## Database Schema
+
+### Products Table
+- `id`: Unique identifier
+- `name`: Product name
+- `description`: Product description
+- `barcode`: Product barcode (optional)
+- `category`: Product category
+- `total_bulk_cost`: Total cost of bulk purchase
+- `quantity_purchased`: Number of units purchased
+- `profit_margin`: Profit margin percentage
+- `quantity_in_stock`: Units in storage
+- `quantity_on_shelf`: Units on display
+- `manufactured_date`: Manufacturing date
+- `expiry_date`: Expiry date
+- `photo_path`: Path to product photo (optional)
+- `reorder_level`: Minimum stock level before alert
+- `is_active`: Soft delete flag
+- `created_at`: Creation timestamp
+- `updated_at`: Last update timestamp
+
+## Technology Stack
+
+- **Electron.js**: Cross-platform desktop framework
+- **Better-SQLite3**: Fast, synchronous SQLite database
+- **ExcelJS**: Excel file generation
+- **Nodemailer**: Email sending functionality
+- **Bootstrap 5**: UI framework
+- **Bootstrap Icons**: Icon library
+
+## File Structure
+
+```
+Wolo_app_1.0/
+├── main.js              # Main Electron process
+├── index.html           # Main UI
+├── renderer.js          # Renderer process logic
+├── styles.css           # Application styles
+├── package.json         # Dependencies and scripts
+└── README.md           # This file
+```
+
+## Data Storage
+
+All data is stored locally in your system's user data directory:
+- **Windows**: `%APPDATA%\wolo-inventory\wolo-inventory.db`
+- **macOS**: `~/Library/Application Support/wolo-inventory/wolo-inventory.db`
+- **Linux**: `~/.config/wolo-inventory/wolo-inventory.db`
+
+## Troubleshooting
+
+### Database Issues
+If you encounter database errors, delete the database file and restart the app. The database will be recreated automatically.
+
+### Email Not Sending
+1. Verify SMTP settings are correct
+2. For Gmail, ensure you're using an App Password, not your regular password
+3. Check that "Less secure app access" is enabled (or use App Password)
+
+### Build Issues
+If you encounter issues building the app:
+```bash
+# Clean install
+rm -rf node_modules package-lock.json
+npm install
+npm start
+```
+
+## License
+
+MIT License
+
+## Support
+
+For issues or questions, please create an issue in the repository.
+
+---
+
+**Made with ❤️ for Pharmacy Owners**
