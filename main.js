@@ -21,6 +21,22 @@ let cachePath = null;
 // Production optimizations
 const isDev = process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true';
 
+// Helper function to get correct paths in both dev and production
+function getResourcePath(relativePath) {
+  // In production, app is packaged in an ASAR archive
+  if (app.isPackaged) {
+    // For resources, check if they're in extraResources first
+    const resourcePath = path.join(process.resourcesPath, relativePath);
+    if (fs.existsSync(resourcePath)) {
+      return resourcePath;
+    }
+    // Otherwise, use app path (for files in ASAR)
+    return path.join(app.getAppPath(), relativePath);
+  }
+  // In development, use __dirname
+  return path.join(__dirname, relativePath);
+}
+
 // IPC handlers will be registered after database initialization
 let ipcHandlersInitialized = false;
 
@@ -1915,16 +1931,24 @@ function createWindow() {
     
     console.log('Creating main browser window...');
     
+    // Get correct paths for production
+    const iconPath = getResourcePath('WOLO-PHARMACY.ico');
+    const preloadPath = getResourcePath('preload.js');
+    
+    console.log('Resource paths:', { iconPath, preloadPath, isPackaged: app.isPackaged, appPath: app.getAppPath() });
+    
     mainWindow = new BrowserWindow({
       width: 1400,
       height: 900,
       minWidth: 500,
       minHeight: 700,
-      icon: path.join(__dirname, 'WOLO-PHARMACY.ico'),
+      icon: iconPath,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        preload: path.join(__dirname, 'preload.js'),
+        preload: preloadPath,
+        // Ensure correct path resolution in production
+        sandbox: false,
         webSecurity: true,
         enableRemoteModule: false,
         partition: 'persist:main',
@@ -1968,12 +1992,23 @@ function createWindow() {
     });
     
     // Set window icon and load the main page
-    mainWindow.setIcon(path.join(__dirname, 'WOLO-PHARMACY.ico'));
+    mainWindow.setIcon(iconPath);
     
     // Load the main page with error handling
-    mainWindow.loadFile('index.html').catch(error => {
+    // loadFile automatically resolves relative to app directory (works with ASAR in production)
+    const htmlPath = 'index.html';
+    console.log('Loading HTML from:', htmlPath, 'App path:', app.getAppPath());
+    mainWindow.loadFile(htmlPath).catch(error => {
       console.error('Failed to load index.html:', error);
-      dialog.showErrorBox('Load Error', 'Failed to load the application: ' + error.message);
+      console.error('App path:', app.getAppPath());
+      console.error('Is packaged:', app.isPackaged);
+      // Try with full path as fallback
+      const fullPath = path.join(app.getAppPath(), 'index.html');
+      console.log('Trying full path:', fullPath);
+      mainWindow.loadFile(fullPath).catch(err => {
+        console.error('Failed with full path:', err);
+        dialog.showErrorBox('Load Error', `Failed to load the application.\n\nError: ${error.message}\n\nApp Path: ${app.getAppPath()}\nIs Packaged: ${app.isPackaged}`);
+      });
     });
     
     // Show developer credits on startup

@@ -364,6 +364,9 @@ function initSplashScreen() {
 }
 
 // Check if user name is set and show welcome modal if not
+// Track if welcome modal handler is already set up
+let welcomeModalHandlerSetup = false;
+
 async function checkAndShowWelcomeModal() {
     try {
         // Import settings API
@@ -375,12 +378,26 @@ async function checkAndShowWelcomeModal() {
         
         if (!userName || userName.trim() === '') {
             // Show welcome modal
-            const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
+            const welcomeModalElement = document.getElementById('welcomeModal');
+            if (!welcomeModalElement) {
+                console.warn('Welcome modal element not found');
+                return;
+            }
+            
+            // Get or create modal instance
+            let welcomeModal = bootstrap.Modal.getInstance(welcomeModalElement);
+            if (!welcomeModal) {
+                welcomeModal = new bootstrap.Modal(welcomeModalElement);
+            }
+            
             welcomeModal.show();
             
-            // Set up form submission
+            // Set up form submission (only once)
             const welcomeForm = document.getElementById('welcomeForm');
-            if (welcomeForm) {
+            if (welcomeForm && !welcomeModalHandlerSetup) {
+                welcomeModalHandlerSetup = true;
+                
+                // Add listener (removeEventListener won't work with anonymous functions, but we check the flag)
                 welcomeForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const userNameInput = document.getElementById('userNameInput');
@@ -390,7 +407,20 @@ async function checkAndShowWelcomeModal() {
                         try {
                             const result = await settings.save('user_name', userName);
                             if (result?.success) {
-                                welcomeModal.hide();
+                                // Hide and dispose modal properly
+                                const modalInstance = bootstrap.Modal.getInstance(welcomeModalElement);
+                                if (modalInstance) {
+                                    modalInstance.hide();
+                                    // Wait for hide animation, then dispose
+                                    setTimeout(() => {
+                                        modalInstance.dispose();
+                                    }, 300);
+                                } else {
+                                    // Fallback: hide using jQuery/Bootstrap directly
+                                    const modal = bootstrap.Modal.getInstance(welcomeModalElement) || new bootstrap.Modal(welcomeModalElement);
+                                    modal.hide();
+                                }
+                                
                                 // Show personalized welcome message
                                 if (typeof showToast === 'function') {
                                     showToast(`Welcome, ${userName}! Let's get started.`, 'success');
@@ -404,6 +434,8 @@ async function checkAndShowWelcomeModal() {
                             console.error('Error saving user name:', error);
                             showToast('Failed to save your name. Please try again.', 'danger');
                         }
+                    } else {
+                        showToast('Please enter your name to continue.', 'warning');
                     }
                 });
             }

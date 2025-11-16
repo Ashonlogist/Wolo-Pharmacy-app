@@ -32,28 +32,97 @@ A cross-platform desktop inventory management application designed specifically 
 
 ## Installation
 
-### Prerequisites
+### For End Users
+
+#### Windows Installation
+
+1. **Download the Installer**
+   - Download `Wolo Pharmacy-1.0.0-Setup.exe` (or the latest version)
+   - This is a standard Windows installer
+
+2. **Run the Installer**
+   - Double-click the downloaded `.exe` file
+   - If Windows shows a security warning, click "More info" and then "Run anyway"
+   - Follow the installation wizard:
+     - Choose installation directory (default is recommended)
+     - The installer will create desktop and start menu shortcuts automatically
+
+3. **Launch the Application**
+   - Double-click the desktop shortcut, or
+   - Find "Wolo Pharmacy" in your Start Menu
+
+#### Windows Portable Version (No Installation Required)
+
+1. **Download the Portable Version**
+   - Download `Wolo Pharmacy-1.0.0-portable.exe`
+   - Extract or run directly from any location
+
+2. **Run the Application**
+   - Double-click `Wolo Pharmacy-1.0.0-portable.exe`
+   - No installation required - runs from any folder
+
+#### macOS Installation
+
+1. **Download the DMG**
+   - Download `Wolo Pharmacy-1.0.0-x64.dmg` (or the latest version)
+
+2. **Install**
+   - Open the downloaded `.dmg` file
+   - Drag "Wolo Pharmacy" to your Applications folder
+   - If macOS shows a security warning, go to System Preferences > Security & Privacy and click "Open Anyway"
+
+3. **Launch**
+   - Open from Applications folder or Launchpad
+
+#### Linux Installation
+
+**AppImage (Recommended - Universal)**
+1. Download `Wolo Pharmacy-1.0.0-x64.AppImage`
+2. Make it executable: `chmod +x Wolo\ Pharmacy-1.0.0-x64.AppImage`
+3. Run: `./Wolo\ Pharmacy-1.0.0-x64.AppImage`
+
+**DEB Package (Debian/Ubuntu)**
+1. Download `Wolo Pharmacy-1.0.0-x64.deb`
+2. Install: `sudo dpkg -i "Wolo Pharmacy-1.0.0-x64.deb"`
+3. Launch from applications menu
+
+**RPM Package (Red Hat/Fedora)**
+1. Download `Wolo Pharmacy-1.0.0-x64.rpm`
+2. Install: `sudo rpm -i "Wolo Pharmacy-1.0.0-x64.rpm"`
+3. Launch from applications menu
+
+### For Developers
+
+#### Prerequisites
 - Node.js (v16 or higher)
 - npm or yarn
 
-### Setup
+#### Development Setup
 
-1. **Install Dependencies**
+1. **Clone the Repository**
+```bash
+git clone <repository-url>
+cd Wolo-Pharmacy-app-1
+```
+
+2. **Install Dependencies**
 ```bash
 npm install
 ```
 
-2. **Run the Application**
+3. **Run the Application in Development Mode**
 ```bash
 npm start
 ```
 
-3. **Build for Production**
+4. **Build for Production**
 ```bash
 npm run build
 ```
 
 This will create installers for your platform in the `dist` folder.
+
+For detailed build instructions, see [BUILD_GUIDE.md](BUILD_GUIDE.md).
 
 ## Usage
 

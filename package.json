@@ -25,7 +25,9 @@
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "prebuild": "npm run clean && node build/build-optimize.js",
     "clean": "rimraf dist",
-    "rebuild": "electron-rebuild -f -w better-sqlite3"
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build:win:dir": "electron-builder --win --dir",
+    "postbuild": "node build/create-launcher.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.2.2",
@@ -96,7 +98,11 @@
       ],
       "icon": "WOLO-PHARMACY.ico",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "publisherName": "Ashong Aaron Nii Nortey"
+      "publisherName": "Ashong Aaron Nii Nortey",
+      "sign": null,
+      "signingHashAlgorithms": null,
+      "certificateFile": null,
+      "certificatePassword": null
     },
     "nsis": {
       "oneClick": false,
