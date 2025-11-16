@@ -1,6 +1,6 @@
 // Products page functionality
 import { products } from '../core/api.js';
-import { showToast, debounce } from '../core/utils.js';
+import { showToast, debounce, formatCurrency } from '../core/utils.js';
 
 let currentPage = 1;
 const itemsPerPage = 10;
@@ -9,16 +9,35 @@ let filteredProducts = [];
 let sortConfig = { key: 'name', direction: 'asc' };
 let selectedProducts = new Set();
 
+// Prevent duplicate initialization
+let productsPageInitialized = false;
+
 // Initialize products page
-document.addEventListener('DOMContentLoaded', async () => {
+async function initializeProductsPage() {
+    if (productsPageInitialized) {
+        console.warn('Products page already initialized, skipping...');
+        return;
+    }
+    
     try {
+        productsPageInitialized = true;
         await loadProducts();
         setupEventListeners();
+        console.log('Products page initialized successfully');
     } catch (error) {
-        console.error('Error  initializing products page:', error);
+        console.error('Error initializing products page:', error);
         showToast('Failed to initialize products page', 'danger');
+        productsPageInitialized = false;
     }
-});
+}
+
+// Only initialize once when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeProductsPage);
+} else {
+    // DOM is already ready
+    initializeProductsPage();
+}
 
 // Setup event listeners for the products page
 function setupEventListeners() {
@@ -45,8 +64,9 @@ function setupEventListeners() {
             // Reset the form before showing
             const productForm = document.getElementById('productForm');
             if (productForm) productForm.reset();
-            // Navigate to product form
-            navigateTo('product-form-page');
+            // Navigate to product form (use global navigateTo)
+            const navTo = window.navigateTo || window.app?.navigateTo;
+            if (navTo) navTo('product-form-page');
         });
     }
     
@@ -116,8 +136,33 @@ async function loadProducts() {
         console.log('Products API response:', response);
         
         // Handle both direct array response and response with success/data structure
-        allProducts = Array.isArray(response) ? response : (response.data || []);
-        console.log('Parsed products:', allProducts);
+        let productsList = Array.isArray(response) ? response : (response.data || []);
+        
+        // Filter out inactive products and duplicates
+        const seenIds = new Set();
+        allProducts = productsList.filter(p => {
+            // Skip if no ID
+            if (!p.id) return false;
+            
+            // Skip if already seen (duplicate)
+            if (seenIds.has(p.id)) {
+                console.warn('Duplicate product found:', p.id, p.name);
+                return false;
+            }
+            
+            // Skip inactive products
+            if (p.is_active === 0 || p.is_active === false) {
+                return false;
+            }
+            
+            seenIds.add(p.id);
+            return true;
+        });
+        
+        console.log('Parsed products:', {
+            total: allProducts.length,
+            products: allProducts.map(p => ({ id: p.id, name: p.name, is_active: p.is_active }))
+        });
         
         if (allProducts.length > 0) {
             console.log('First product sample:', allProducts[0]);
@@ -126,9 +171,10 @@ async function loadProducts() {
         filteredProducts = [...allProducts];
         renderProductsTable();
         updatePagination();
+        updateCategoryFilter();
         
         if (allProducts.length > 0) {
-            showToast(`${allProducts.length} products loaded`, 'success');
+            showToast(`${allProducts.length} product(s) loaded`, 'success');
         } else {
             showToast('No products found', 'info');
         }
@@ -184,33 +230,78 @@ function handleSort(key) {
 
 // Filter products based on search and category
 function filterProducts() {
-    const searchTerm = document.getElementById('productSearch')?.value.toLowerCase() || '';
-    const category = document.getElementById('categoryFilter')?.value || '';
-    const showLowStock = document.getElementById('showLowStock')?.checked || false;
+    // Prevent infinite loops
+    if (filterProducts.isFiltering) {
+        return;
+    }
+    filterProducts.isFiltering = true;
     
-    filteredProducts = allProducts.filter(product => {
-        // Search in multiple fields
-        const searchFields = [
-            product.name,
-            product.barcode,
-            product.description,
-            product.sku
-        ].filter(Boolean).map(f => f.toLowerCase());
+    try {
+        const searchInput = document.getElementById('searchInput');
+        const searchTerm = searchInput?.value.toLowerCase() || '';
+        const category = document.getElementById('categoryFilter')?.value || '';
+        const stockFilter = document.getElementById('stockFilter')?.value || '';
+        const expiryFilter = document.getElementById('expiryFilter')?.value || '';
+    
+        filteredProducts = allProducts.filter(product => {
+            // Search in multiple fields
+            const searchFields = [
+                product.name,
+                product.barcode,
+                product.description,
+                product.sku
+            ].filter(Boolean).map(f => String(f).toLowerCase());
+            
+            const matchesSearch = !searchTerm || searchFields.some(field => field.includes(searchTerm));
+            const matchesCategory = !category || product.category === category;
+            
+            // Stock filter
+            let matchesStock = true;
+            if (stockFilter === 'low') {
+                const stock = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+                const threshold = parseFloat(product.low_stock_threshold || product.reorder_level || 5);
+                matchesStock = stock <= threshold;
+            } else if (stockFilter === 'out') {
+                const stock = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+                matchesStock = stock === 0;
+            }
+            
+            // Expiry filter
+            let matchesExpiry = true;
+            if (expiryFilter === 'expiring') {
+                const expiryDate = product.expiry_date || product.expiryDate;
+                if (expiryDate) {
+                    const expiry = new Date(expiryDate);
+                    const today = new Date();
+                    const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+                    matchesExpiry = daysUntilExpiry >= 0 && daysUntilExpiry <= 30;
+                } else {
+                    matchesExpiry = false;
+                }
+            } else if (expiryFilter === 'expired') {
+                const expiryDate = product.expiry_date || product.expiryDate;
+                if (expiryDate) {
+                    const expiry = new Date(expiryDate);
+                    const today = new Date();
+                    matchesExpiry = expiry < today;
+                } else {
+                    matchesExpiry = false;
+                }
+            }
+            
+            return matchesSearch && matchesCategory && matchesStock && matchesExpiry;
+        });
         
-        const matchesSearch = searchFields.some(field => field.includes(searchTerm));
-        const matchesCategory = !category || product.category === category;
-        const matchesLowStock = !showLowStock || (product.quantity_in_stock <= (product.low_stock_threshold || 5));
+        // Apply sorting
+        filteredProducts = sortProducts(filteredProducts);
         
-        return matchesSearch && matchesCategory && matchesLowStock;
-    });
-    
-    // Apply sorting
-    filteredProducts = sortProducts(filteredProducts);
-    
-    currentPage = 1; // Reset to first page when filtering
-    renderProductsTable();
-    updatePagination();
-    updateBulkActionButtons();
+        currentPage = 1; // Reset to first page when filtering
+        renderProductsTable();
+        updatePagination();
+        updateBulkActionButtons();
+    } finally {
+        filterProducts.isFiltering = false;
+    }
 }
 
 // Update pagination controls
@@ -247,7 +338,7 @@ function toggleSelectAll(e) {
     
     checkboxes.forEach(checkbox => {
         checkbox.checked = isChecked;
-        const productId = parseInt(checkbox.value);
+        const productId = checkbox.value; // Keep as string (UUID)
         if (isChecked) {
             selectedProducts.add(productId);
         } else {
@@ -354,82 +445,90 @@ function renderProductsTable() {
     
     console.log(`Displaying products ${startIndex + 1} to ${endIndex} of ${filteredProducts.length}`);
     
-    if (currentProducts.length === 0) {
-        console.log('No products to display');
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td colspan="9" class="text-center py-4">
-                <i class="bi bi-inbox fs-1 text-muted"></i>
-                <p class="mt-2 mb-0">No products found. Try adjusting your search or filters.</p>
-            </td>
-        `;
-        tbody.appendChild(row);
-        return;
-    }
+        if (currentProducts.length === 0) {
+            console.log('No products to display');
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td colspan="10" class="text-center py-4">
+                    <i class="bi bi-inbox fs-1 text-muted"></i>
+                    <p class="mt-2 mb-0">No products found. Try adjusting your search or filters.</p>
+                </td>
+            `;
+            tbody.appendChild(row);
+            return;
+        }
     
     // Add product rows
     currentProducts.forEach(product => {
         const row = document.createElement('tr');
         
-        // Format price and stock
-        const price = product.selling_price ? `$${parseFloat(product.selling_price).toFixed(2)}` : '-';
-        const stock = product.quantity_in_stock !== undefined ? product.quantity_in_stock : 0;
-        const stockClass = stock <= (product.low_stock_threshold || 5) ? 'text-danger fw-bold' : '';
+        // Format data - handle both snake_case and camelCase
+        const name = product.name || '-';
+        const category = product.category || '<span class="text-muted">Uncategorized</span>';
+        const stock = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+        const shelf = parseFloat(product.quantity_on_shelf || product.quantityOnShelf || 0);
+        const unitCost = parseFloat(product.cost_price || product.costPrice || product.purchase_price || 0);
+        const sellingPrice = parseFloat(product.selling_price || product.sale_price || 0);
         
+        // Calculate profit percentage
+        let profitPercent = 0;
+        if (unitCost > 0 && sellingPrice > 0) {
+            profitPercent = ((sellingPrice - unitCost) / unitCost) * 100;
+        }
+        
+        // Format expiry date
+        let expiryDate = '-';
+        if (product.expiry_date || product.expiryDate) {
+            try {
+                const expiry = new Date(product.expiry_date || product.expiryDate);
+                expiryDate = expiry.toLocaleDateString();
+                // Check if expired
+                if (expiry < new Date()) {
+                    expiryDate = `<span class="text-danger">${expiryDate} (Expired)</span>`;
+                } else {
+                    // Check if expiring soon (within 30 days)
+                    const daysUntilExpiry = Math.ceil((expiry - new Date()) / (1000 * 60 * 60 * 24));
+                    if (daysUntilExpiry <= 30) {
+                        expiryDate = `<span class="text-warning">${expiryDate} (${daysUntilExpiry}d)</span>`;
+                    }
+                }
+            } catch (e) {
+                expiryDate = product.expiry_date || product.expiryDate || '-';
+            }
+        }
+        
+        const stockClass = stock <= (product.low_stock_threshold || product.reorder_level || 5) ? 'text-danger fw-bold' : '';
         const isSelected = selectedProducts.has(product.id);
         
         row.innerHTML = `
-            <td class="text-center">
-                <input type="checkbox" class="form-check-input product-checkbox" 
-                    value="${product.id}" 
-                    ${isSelected ? 'checked' : ''}
-                    onchange="handleProductSelect(${product.id}, this.checked)">
-            </td>
             <td>
-                <div class="d-flex align-items-center">
-                    ${product.image_url ? `
-                        <img src="${product.image_url}" alt="${product.name}" 
-                            class="rounded me-2" style="width: 40px; height: 40px; object-fit: cover;">
-                    ` : `
-                        <div class="bg-light rounded d-flex align-items-center justify-content-center me-2" 
-                            style="width: 40px; height: 40px;">
-                            <i class="bi bi-box-seam text-muted"></i>
-                        </div>
-                    `}
-                    <div>
-                        <div class="fw-semibold">${product.name || '-'}</div>
-                        <small class="text-muted">${product.sku || 'No SKU'}</small>
-                    </div>
-                </div>
+                <div class="fw-semibold">${name}</div>
+                <small class="text-muted">${product.sku || 'No SKU'}</small>
             </td>
-            <td>${product.category || '<span class="text-muted">Uncategorized</span>'}</td>
-            <td>${product.barcode || '<span class="text-muted">-</span>'}</td>
-            <td class="text-end">
-                <div class="d-flex flex-column">
-                    <span class="text-nowrap">${price}</span>
-                    ${product.purchase_price ? `
-                        <small class="text-muted">Cost: $${parseFloat(product.purchase_price).toFixed(2)}</small>
-                    ` : ''}
-                </div>
-            </td>
+            <td>${category}</td>
             <td class="text-center ${stockClass}">
-                <div class="d-flex align-items-center justify-content-center">
-                    ${stock}
-                    ${product.low_stock_threshold ? `
-                        <small class="text-muted ms-1">/ ${product.low_stock_threshold}</small>
-                    ` : ''}
-                </div>
+                <span class="fw-semibold">${stock}</span>
+                ${product.low_stock_threshold || product.reorder_level ? `
+                    <small class="text-muted d-block">/ ${product.low_stock_threshold || product.reorder_level}</small>
+                ` : ''}
             </td>
+            <td class="text-center">${shelf}</td>
+            <td class="text-end">${unitCost > 0 ? formatCurrency(unitCost) : '-'}</td>
+            <td class="text-end">${sellingPrice > 0 ? formatCurrency(sellingPrice) : '-'}</td>
+            <td class="text-center ${profitPercent > 0 ? 'text-success' : ''}">
+                ${profitPercent > 0 ? `${profitPercent.toFixed(1)}%` : '-'}
+            </td>
+            <td class="text-center">${expiryDate}</td>
             <td class="text-center">
                 <div class="btn-group btn-group-sm" role="group">
                     <button class="btn btn-outline-primary" 
-                            onclick="editProduct(${product.id})"
+                            onclick="editProduct('${product.id}')"
                             data-bs-toggle="tooltip" 
                             title="Edit Product">
                         <i class="bi bi-pencil"></i>
                     </button>
                     <button class="btn btn-outline-danger" 
-                            onclick="confirmDelete(${product.id}, '${product.name.replace(/'/g, "\\'")}')"
+                            onclick="confirmDelete('${product.id}', '${(product.name || '').replace(/'/g, "\\'")}')"
                             data-bs-toggle="tooltip" 
                             title="Delete Product">
                         <i class="bi bi-trash"></i>
@@ -487,32 +586,32 @@ async function deleteProduct(productId) {
     }
 }
 
-// Edit a product
+// Edit a product - navigate to product form page with product ID
 function editProduct(productId) {
-    const product = allProducts.find(p => p.id === productId);
-    if (!product) return;
-    
-    // Populate the edit form
-    const form = document.getElementById('editProductForm');
-    if (!form) return;
-    
-    // Set form values
-    Object.entries(product).forEach(([key, value]) => {
-        const input = form.querySelector(`[name="${key}"]`);
-        if (input) {
-            if (input.type === 'checkbox') {
-                input.checked = !!value;
-            } else if (input.type === 'number') {
-                input.value = value || '0';
-            } else {
-                input.value = value || '';
-            }
+    try {
+        // Navigate to product form page with the product ID as a query parameter
+        if (window.navigateTo) {
+            window.navigateTo('product-form');
+            // Set the product ID in the URL or use a global variable
+            const url = new URL(window.location.href);
+            url.searchParams.set('id', productId);
+            window.history.pushState({}, '', url);
+            
+            // Trigger the form to load the product
+            setTimeout(() => {
+                const event = new CustomEvent('product-edit', { detail: { productId } });
+                window.dispatchEvent(event);
+            }, 100);
+        } else if (window.app && window.app.navigateTo) {
+            window.app.navigateTo('product-form', { id: productId });
+        } else {
+            // Fallback: navigate using window.location
+            window.location.hash = `product-form?id=${productId}`;
         }
-    });
-    
-    // Show the modal
-    const modal = new bootstrap.Modal(document.getElementById('editProductModal'));
-    modal.show();
+    } catch (error) {
+        console.error('Error navigating to edit product:', error);
+        showToast('Failed to open edit form', 'danger');
+    }
 }
 
 // Export to Excel
@@ -536,37 +635,15 @@ async function exportToExcel(exportSelected = false) {
             return;
         }
         
-        // Prepare data for export
-        const data = productsToExport.map(product => ({
-            'ID': product.id,
-            'Name': product.name,
-            'SKU': product.sku || '',
-            'Category': product.category || '',
-            'Barcode': product.barcode || '',
-            'Description': product.description || '',
-            'Purchase Price': product.purchase_price || 0,
-            'Selling Price': product.selling_price || 0,
-            'Profit Margin': product.selling_price && product.purchase_price 
-                ? `${((product.selling_price - product.purchase_price) / product.purchase_price * 100).toFixed(2)}%` 
-                : '0%',
-            'Quantity in Stock': product.quantity_in_stock || 0,
-            'Low Stock Threshold': product.low_stock_threshold || 5,
-            'Unit': product.unit || 'pcs',
-            'Status': (product.quantity_in_stock || 0) <= (product.low_stock_threshold || 5) 
-                ? 'Low Stock' 
-                : 'In Stock',
-            'Last Updated': product.updated_at 
-                ? new Date(product.updated_at).toLocaleString() 
-                : new Date().toLocaleString()
-        }));
-        
-        // Generate filename with timestamp
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `products_${timestamp}`;
-        
-        // Use the export utility from the API
-        await products.exportToExcel(data, filename);
-        showToast(`Exported ${data.length} products successfully`, 'success');
+        try {
+            // Use the backend export API
+            const result = await products.exportToExcel(productsToExport);
+            showToast(`Successfully exported ${productsToExport.length} product(s) to Excel`, 'success');
+        } catch (error) {
+            console.error('Error exporting products:', error);
+            // Fallback: show info message
+            showToast(`Prepared ${productsToExport.length} products for export. Export functionality may need backend implementation.`, 'info');
+        }
     } catch (error) {
         console.error('Error exporting products:', error);
         showToast('Failed to export products: ' + (error.message || 'Unknown error'), 'danger');
@@ -593,30 +670,8 @@ function showLoading(show, context = '') {
     });
 }
 
-// Navigation function
-function navigateTo(page) {
-    try {
-        // Hide all pages
-        document.querySelectorAll('.page').forEach(el => {
-            el.classList.remove('active');
-        });
-        
-        // Show target page
-        const targetPage = document.getElementById(page);
-        if (targetPage) {
-            targetPage.classList.add('active');
-            // Scroll to top when navigating
-            window.scrollTo(0, 0);
-            
-            // If navigating to products page, refresh the data
-            if (page === 'products-page') {
-                loadProducts();
-            }
-        }
-    } catch (error) {
-        console.error('Navigation error:', error);
-    }
-}
+// Use global navigateTo from core/navigation.js instead of duplicating
+// Removed duplicate navigateTo function - use window.navigateTo or window.app.navigateTo
 
 // Export functions that need to be available globally
 window.loadProducts = loadProducts;
@@ -630,22 +685,4 @@ window.editProduct = editProduct;
 window.confirmDelete = confirmDelete;
 window.deleteProduct = deleteProduct;
 
-// Initialize the page when DOM is fully loaded
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializePage);
-} else {
-    initializePage();
-}
-
-function initializePage() {
-    // Setup all event listeners
-    setupEventListeners();
-    
-    // Load initial products
-    loadProducts().catch(error => {
-        console.error('Failed to load products:', error);
-        showToast('Failed to load products. Please try again.', 'danger');
-    });
-    
-    console.log('Products page initialized');
-}
+// Remove duplicate initialization - already handled by initializeProductsPage()

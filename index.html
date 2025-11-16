@@ -592,10 +592,42 @@
     }
     </style>
     <script>
-        // Check if running in Electron
-        window.isElectron = (typeof window.require === 'function' && window.require('electron'));
-        if (!window.isElectron) {
-            console.warn('Running in browser mode - Electron IPC not available. IPC calls will fail.');
+        // Check if running in Electron - wait for preload script to finish
+        // With contextIsolation enabled, Electron APIs are exposed via contextBridge
+        // This check runs after DOMContentLoaded to ensure preload has finished
+        function checkElectronEnvironment() {
+            // Check multiple indicators that Electron is available
+            const hasElectron = typeof window.electron !== 'undefined' && 
+                                typeof window.electron.ipcRenderer !== 'undefined';
+            const hasProcess = typeof window.process !== 'undefined' && 
+                              window.process.versions && 
+                              window.process.versions.electron;
+            
+            window.isElectron = hasElectron || hasProcess;
+            
+            if (!window.isElectron) {
+                // Retry after a short delay in case preload hasn't finished
+                setTimeout(() => {
+                    const retryCheck = typeof window.electron !== 'undefined' && 
+                                     typeof window.electron.ipcRenderer !== 'undefined';
+                    if (retryCheck) {
+                        window.isElectron = true;
+                        console.log('Electron environment detected - IPC available (delayed check)');
+                    } else {
+                        console.warn('Running in browser mode - Electron IPC not available. IPC calls will fail.');
+                    }
+                }, 100);
+            } else {
+                console.log('Electron environment detected - IPC available');
+            }
+        }
+        
+        // Run check when DOM is ready (preload should be done by then)
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', checkElectronEnvironment);
+        } else {
+            // DOM already loaded, check immediately
+            checkElectronEnvironment();
         }
     </script>
     
@@ -707,7 +739,7 @@
         <div id="dashboard-page" class="page active">
             <div class="page-header">
                 <h1>Dashboard</h1>
-                <button class="btn btn-primary" onclick="refreshDashboard()">
+                <button class="btn btn-primary" id="refreshDashboardBtn">
                     <i class="bi bi-arrow-clockwise"></i> Refresh
                 </button>
             </div>
@@ -781,11 +813,11 @@
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Sales Analytics</h5>
                     <div class="d-flex gap-2">
-                        <select id="chartType" class="form-select form-select-sm" style="width: auto;" onchange="updateChartType()">
+                        <select id="chartType" class="form-select form-select-sm" style="width: auto;">
                             <option value="bar">Bar Chart</option>
                             <option value="line">Line Chart</option>
                         </select>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshSalesChart()">
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshSalesChartBtn">
                             <i class="bi bi-arrow-clockwise"></i> Refresh
                         </button>
                     </div>
@@ -802,20 +834,20 @@
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Category</label>
-                            <select id="categoryFilter" class="form-select form-select-sm" onchange="refreshSalesChart()">
+                            <select id="categoryFilter" class="form-select form-select-sm">
                                 <option value="">All Categories</option>
                             </select>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">View</label>
-                            <select id="timeGrouping" class="form-select form-select-sm" onchange="refreshSalesChart()">
+                            <select id="timeGrouping" class="form-select form-select-sm">
                                 <option value="day">Daily</option>
                                 <option value="week">Weekly</option>
                                 <option value="month">Monthly</option>
                             </select>
                         </div>
                         <div class="col-md-2 d-flex align-items-end">
-                            <button class="btn btn-primary btn-sm w-100" onclick="refreshSalesChart()">
+                            <button class="btn btn-primary btn-sm w-100" id="refreshSalesChartBtn2">
                                 <i class="bi bi-funnel"></i> Apply
                             </button>
                         </div>
@@ -894,16 +926,16 @@
             </div>
 
             <div class="filters-bar">
-                <input type="text" id="searchInput" class="form-control" placeholder="Search products..." onkeyup="filterProducts()">
-                <select id="categoryFilter" class="form-select" onchange="filterProducts()">
+                <input type="text" id="searchInput" class="form-control" placeholder="Search products...">
+                <select id="categoryFilter" class="form-select">
                     <option value="">All Categories</option>
                 </select>
-                <select id="stockFilter" class="form-select" onchange="filterProducts()">
+                <select id="stockFilter" class="form-select">
                     <option value="">All Stock</option>
                     <option value="low">Low Stock</option>
                     <option value="out">Out of Stock</option>
                 </select>
-                <select id="expiryFilter" class="form-select" onchange="filterProducts()">
+                <select id="expiryFilter" class="form-select">
                     <option value="">All Expiry</option>
                     <option value="expiring">Expiring Soon</option>
                     <option value="expired">Expired</option>
@@ -914,6 +946,12 @@
                 <table class="table table-hover">
                     <thead>
                         <tr>
+                            <th width="40">
+                                <input type="checkbox" 
+                                       id="selectAllProducts" 
+                                       class="form-check-input" 
+                                       onchange="toggleSelectAll(event)">
+                            </th>
                             <th>Name</th>
                             <th>Category</th>
                             <th>Stock</th>
@@ -929,6 +967,38 @@
                     </tbody>
                 </table>
             </div>
+            
+            <!-- Pagination and Bulk Actions -->
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <div>
+                    <span id="selectionCount" class="text-muted"></span>
+                    <button id="bulkDeleteBtn" 
+                            class="btn btn-sm btn-danger ms-2" 
+                            disabled
+                            onclick="handleBulkDelete()">
+                        <i class="bi bi-trash"></i> Delete Selected
+                    </button>
+                    <button id="exportSelectedBtn" 
+                            class="btn btn-sm btn-success ms-2" 
+                            disabled
+                            onclick="exportToExcel(true)">
+                        <i class="bi bi-file-earmark-excel"></i> Export Selected
+                    </button>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <button id="prevPage" 
+                            class="btn btn-sm btn-outline-secondary" 
+                            onclick="changePage(-1)">
+                        <i class="bi bi-chevron-left"></i> Previous
+                    </button>
+                    <span id="pageInfo" class="text-muted">Page 1 of 1</span>
+                    <button id="nextPage" 
+                            class="btn btn-sm btn-outline-secondary" 
+                            onclick="changePage(1)">
+                        Next <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
          </div>
 
         <!-- Add/Edit Product Page -->
@@ -942,7 +1012,7 @@
 
             <div class="card">
                 <div class="card-body">
-                    <form id="productForm" onsubmit="handleFormSubmit(event)">
+                    <form id="productForm">
                         <input type="hidden" id="productId">
                         
                         <div class="row">
@@ -983,13 +1053,13 @@
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Total Bulk Cost *</label>
-                                    <input type="number" step="0.01" class="form-control" id="totalBulkCost" required onchange="calculatePrices()">
+                                    <input type="number" step="0.01" class="form-control" id="totalBulkCost" required>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Quantity Purchased *</label>
-                                    <input type="number" class="form-control" id="quantityPurchased" required onchange="calculatePrices()">
+                                    <input type="number" class="form-control" id="quantityPurchased" required>
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -1004,7 +1074,7 @@
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Profit Margin (%) *</label>
-                                    <input type="number" step="0.01" class="form-control" id="profitMargin" required onchange="calculatePrices()">
+                                    <input type="number" step="0.01" class="form-control" id="profitMargin" required>
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -1061,7 +1131,7 @@
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-save"></i> Save Product
                             </button>
-                            <button type="button" class="btn btn-secondary" onclick="resetForm()">
+                            <button type="button" class="btn btn-secondary" id="resetFormBtn">
                                 <i class="bi bi-x-circle"></i> Reset
                             </button>
                         </div>
@@ -1103,7 +1173,7 @@
                             <input type="date" class="form-control" id="endDate" value="">
                         </div>
                         <div class="col-md-3 d-flex align-items-end">
-                            <button type="button" class="btn btn-primary me-2" onclick="loadSalesByDateRange()">
+                            <button type="button" class="btn btn-primary me-2" id="loadSalesByDateRangeBtn">
                                 <i class="bi bi-funnel"></i> Filter
                             </button>
                             <button type="button" class="btn btn-success export-excel-btn" data-action="export-sales-excel">
@@ -1118,7 +1188,7 @@
             <div class="card mb-4">
                 <div class="card-body">
                     <h5 class="card-title">Record New Sale</h5>
-                    <form id="saleForm" onsubmit="handleSaleSubmit(event)">
+                    <form id="saleForm">
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
@@ -1384,7 +1454,7 @@
                     <h5><i class="bi bi-envelope-at"></i> Email Configuration (SMTP)</h5>
                 </div>
                 <div class="card-body">
-                    <form id="smtpForm" onsubmit="saveSmtpSettings(event)">
+                    <form id="smtpForm">
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
@@ -1465,7 +1535,7 @@
                         <small class="text-muted d-block">Enable additional debugging features and developer tools</small>
                     </div>
                     <div class="text-end">
-                        <button type="button" class="btn btn-primary" onclick="saveSecuritySettings()">
+                        <button type="button" class="btn btn-primary" id="saveSecuritySettingsBtn">
                             <i class="bi bi-save"></i> Save Security Settings
                         </button>
                     </div>
@@ -1500,7 +1570,7 @@
                             
                             <h6 class="mt-4"><i class="bi bi-headset"></i> Support</h6>
                             <p>Need help? Contact our support team for assistance.</p>
-                            <button class="btn btn-sm btn-outline-primary" onclick="contactSupport()">
+                                <button class="btn btn-sm btn-outline-primary" id="contactSupportBtn">
                                 <i class="bi bi-envelope"></i> Contact Support
                             </button>
                         </div>
@@ -1511,7 +1581,7 @@
                             <p>&copy; 2025 All Rights Reserved</p>
                             
                             <div class="mt-4">
-                                <button class="btn btn-sm btn-outline-secondary" onclick="checkForUpdates()">
+                                <button class="btn btn-sm btn-outline-secondary" id="checkForUpdatesBtn">
                                     <i class="bi bi-arrow-repeat"></i> Check for Updates
                                 </button>
                             </div>

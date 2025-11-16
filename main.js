@@ -29,6 +29,8 @@ function registerIpcHandlers() {
     return;
   }
   
+  console.log('Starting IPC handler registration...');
+  
   // Add save dialog handler
   ipcMain.handle('show-save-dialog', async (event, options) => {
     try {
@@ -96,6 +98,90 @@ function registerIpcHandlers() {
     }
   });
 
+  // Create supplier handler
+  ipcMain.handle('create-supplier', async (event, supplierData) => {
+    try {
+      const supplierId = supplierData.id || uuidv4();
+      const now = new Date().toISOString();
+      
+      db.prepare(`
+        INSERT INTO suppliers (id, name, contact_person, email, phone, address, 
+                              tax_id, payment_terms, notes, created_at, updated_at, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        supplierId,
+        supplierData.name,
+        supplierData.contact_person || null,
+        supplierData.email || null,
+        supplierData.phone || null,
+        supplierData.address || null,
+        supplierData.tax_id || null,
+        supplierData.payment_terms || null,
+        supplierData.notes || null,
+        now,
+        now,
+        supplierData.is_active !== undefined ? supplierData.is_active : 1
+      );
+      
+      return { success: true, id: supplierId };
+    } catch (error) {
+      console.error('Error creating supplier:', error);
+      return { success: false, error: error.message || 'Failed to create supplier' };
+    }
+  });
+
+  // Update supplier handler
+  ipcMain.handle('update-supplier', async (event, { id, ...updates }) => {
+    try {
+      const now = new Date().toISOString();
+      const fields = [];
+      const values = [];
+      
+      Object.keys(updates).forEach(key => {
+        if (updates[key] !== undefined) {
+          fields.push(`${key} = ?`);
+          values.push(updates[key]);
+        }
+      });
+      
+      if (fields.length === 0) {
+        return { success: false, error: 'No fields to update' };
+      }
+      
+      fields.push('updated_at = ?');
+      values.push(now);
+      values.push(id);
+      
+      db.prepare(`
+        UPDATE suppliers 
+        SET ${fields.join(', ')}
+        WHERE id = ?
+      `).run(...values);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error updating supplier:', error);
+      return { success: false, error: error.message || 'Failed to update supplier' };
+    }
+  });
+
+  // Delete supplier handler (soft delete by setting is_active = 0)
+  ipcMain.handle('delete-supplier', async (event, { id }) => {
+    try {
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE suppliers 
+        SET is_active = 0, updated_at = ?
+        WHERE id = ?
+      `).run(now, id);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error deleting supplier:', error);
+      return { success: false, error: error.message || 'Failed to delete supplier' };
+    }
+  });
+
   // Product Related Handlers
   ipcMain.handle('get-products', async () => {
     const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
@@ -116,10 +202,14 @@ function registerIpcHandlers() {
             category_id TEXT,
             quantity_in_stock INTEGER NOT NULL DEFAULT 0,
             quantity_on_shelf INTEGER NOT NULL DEFAULT 0,
+            quantity_purchased INTEGER NOT NULL DEFAULT 0,
             cost_price REAL NOT NULL DEFAULT 0,
+            total_bulk_cost REAL NOT NULL DEFAULT 0,
             selling_price REAL NOT NULL DEFAULT 0,
             wholesale_price REAL,
+            profit_margin REAL DEFAULT 0,
             reorder_level INTEGER DEFAULT 10,
+            low_stock_threshold INTEGER DEFAULT 5,
             tax_rate REAL DEFAULT 0,
             supplier_id TEXT,
             supplier_name TEXT,
@@ -133,6 +223,8 @@ function registerIpcHandlers() {
             notes TEXT,
             images TEXT,
             variants TEXT,
+            manufactured_date TEXT,
+            expiry_date TEXT,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -335,187 +427,8 @@ function registerIpcHandlers() {
     }
   });
 
-  // Settings Handlers
-  ipcMain.handle('get-setting', async (event, key) => {
-    const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
-    try {
-      // Ensure settings table exists
-      db.prepare(`
-        CREATE TABLE IF NOT EXISTS settings (
-          key TEXT PRIMARY KEY,
-          value TEXT,
-          updated_at TEXT NOT NULL
-        )
-      `).run();
-      
-      const setting = db.prepare('SELECT * FROM settings WHERE key = ?').get(key);
-      return { 
-        success: true, 
-        data: setting ? JSON.parse(setting.value) : null 
-      };
-    } catch (error) {
-      console.error('Error getting setting:', error);
-      return { 
-        success: false, 
-        error: error.message || 'Failed to get setting' 
-      };
-    } finally {
-      if (db) db.close();
-    }
-  });
-
-  ipcMain.handle('set-setting', async (event, { key, value }) => {
-    const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
-    try {
-      const now = new Date().toISOString();
-      
-      db.prepare(`
-        INSERT INTO settings (key, value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-      `).run(key, JSON.stringify(value), now);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Error saving setting:', error);
-      return { 
-        success: false, 
-        error: error.message || 'Failed to save setting' 
-      };
-    } finally {
-      if (db) db.close();
-    }
-  });
-
-  // Sales Handlers
-  ipcMain.handle('get-sales-by-date-range', async (event, { startDate, endDate }) => {
-    const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
-    try {
-      // Ensure sales table exists
-      db.prepare(`
-        CREATE TABLE IF NOT EXISTS sales (
-          id TEXT PRIMARY KEY,
-          sale_date TEXT NOT NULL,
-          customer_name TEXT,
-          customer_phone TEXT,
-          subtotal REAL NOT NULL,
-          tax_amount REAL NOT NULL,
-          discount_amount REAL DEFAULT 0,
-          total_amount REAL NOT NULL,
-          payment_method TEXT,
-          payment_status TEXT,
-          status TEXT,
-          notes TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-      `).run();
-      
-      const sales = db.prepare(`
-        SELECT * FROM sales 
-        WHERE sale_date BETWEEN ? AND ?
-        ORDER BY sale_date DESC
-      `).all(startDate, endDate);
-      
-      return { success: true, data: sales };
-    } catch (error) {
-      console.error('Error fetching sales:', error);
-      return { 
-        success: false, 
-        error: error.message || 'Failed to fetch sales' 
-      };
-    } finally {
-      if (db) db.close();
-    }
-  });
-
-  ipcMain.handle('get-sales-history', async (event, { productId, startDate, endDate } = {}) => {
-    const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
-    try {
-      // Ensure sales and sale_items tables exist
-      db.prepare(`
-        CREATE TABLE IF NOT EXISTS sales (
-          id TEXT PRIMARY KEY,
-          sale_date TEXT NOT NULL,
-          subtotal REAL NOT NULL,
-          tax_amount REAL NOT NULL,
-          discount_amount REAL DEFAULT 0,
-          total_amount REAL NOT NULL,
-          payment_method TEXT,
-          payment_status TEXT,
-          status TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-      `).run();
-      
-      db.prepare(`
-        CREATE TABLE IF NOT EXISTS sale_items (
-          id TEXT PRIMARY KEY,
-          sale_id TEXT NOT NULL,
-          product_id TEXT,
-          product_name TEXT NOT NULL,
-          quantity INTEGER NOT NULL,
-          unit_price REAL NOT NULL,
-          total_price REAL NOT NULL,
-          discount REAL DEFAULT 0,
-          tax_rate REAL DEFAULT 0,
-          tax_amount REAL DEFAULT 0,
-          created_at TEXT NOT NULL,
-          FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
-        )
-      `).run();
-      
-      let query = `
-        SELECT s.*, 
-               GROUP_CONCAT(si.id) as item_ids,
-               COUNT(si.id) as item_count,
-               SUM(si.total_price) as items_total
-        FROM sales s
-        LEFT JOIN sale_items si ON s.id = si.sale_id
-      `;
-      
-      const params = [];
-      const conditions = [];
-      
-      if (productId) {
-        conditions.push('si.product_id = ?');
-        params.push(productId);
-      }
-      
-      if (startDate && endDate) {
-        conditions.push('s.sale_date BETWEEN ? AND ?');
-        params.push(startDate, endDate);
-      }
-      
-      if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
-      }
-      
-      query += ' GROUP BY s.id ORDER BY s.sale_date DESC';
-      
-      const sales = db.prepare(query).all(...params);
-      
-      return {
-        success: true,
-        data: sales.map(sale => ({
-          ...sale,
-          item_ids: sale.item_ids ? sale.item_ids.split(',') : []
-        }))
-      };
-    } catch (error) {
-      console.error('Error fetching sales history:', error);
-      return { 
-        success: false, 
-        error: error.message || 'Failed to fetch sales history' 
-      };
-    } finally {
-      if (db) db.close();
-    }
-  });
-
+  // Settings Handlers (get-setting and set-setting handlers are defined later in registerIpcHandlers)
+  // Sales Handlers (get-sales-by-date-range handler is defined later in registerIpcHandlers)
   ipcMain.handle('get-low-stock-items', async (event, { threshold = 10 } = {}) => {
     try {
       const items = db.prepare('SELECT * FROM products WHERE quantity_in_stock <= ? AND is_active = 1 ORDER BY quantity_in_stock ASC').all(threshold);
@@ -528,12 +441,58 @@ function registerIpcHandlers() {
 
   ipcMain.handle('get-categories', async () => {
     try {
-      // For now, just return an empty array since categories are not critical
-      // We can implement proper category management later
-      return [];
+      if (!db) {
+        return { success: false, data: [], error: 'Database not initialized' };
+      }
+      // Extract unique categories from products
+      const products = db.prepare('SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != ? AND category != ?').all('', null);
+      const categories = products.map(p => ({ id: p.category.toLowerCase().replace(/\s+/g, '-'), name: p.category }));
+      return { success: true, data: categories };
     } catch (error) {
       console.error('Error fetching categories:', error);
-      return [];
+      return { success: false, data: [], error: error.message };
+    }
+  });
+
+  // Create category handler (categories are stored in products, so this is a helper)
+  ipcMain.handle('create-category', async (event, categoryData) => {
+    try {
+      // Categories are stored in products table, so we just return success
+      // The category will be created when a product uses it
+      return { success: true, id: categoryData.name?.toLowerCase().replace(/\s+/g, '-'), name: categoryData.name };
+    } catch (error) {
+      console.error('Error creating category:', error);
+      return { success: false, error: error.message || 'Failed to create category' };
+    }
+  });
+
+  // Update category handler (updates all products with old category name)
+  ipcMain.handle('update-category', async (event, { id, name }) => {
+    try {
+      // Find old category name from products
+      const oldCategory = db.prepare('SELECT DISTINCT category FROM products WHERE category IS NOT NULL LIMIT 1').get();
+      if (oldCategory && name) {
+        db.prepare('UPDATE products SET category = ? WHERE category = ?').run(name, oldCategory.category);
+      }
+      return { success: true };
+    } catch (error) {
+      console.error('Error updating category:', error);
+      return { success: false, error: error.message || 'Failed to update category' };
+    }
+  });
+
+  // Delete category handler (removes category from all products)
+  ipcMain.handle('delete-category', async (event, { id }) => {
+    try {
+      // Find category name and remove it from products
+      const category = db.prepare('SELECT DISTINCT category FROM products WHERE category IS NOT NULL LIMIT 1').get();
+      if (category) {
+        db.prepare('UPDATE products SET category = NULL WHERE category = ?').run(category.category);
+      }
+      return { success: true };
+    } catch (error) {
+      console.error('Error deleting category:', error);
+      return { success: false, error: error.message || 'Failed to delete category' };
     }
   });
 
@@ -831,183 +790,69 @@ function registerIpcHandlers() {
       throw error;
     }
   });
-  // Add product handler
-  ipcMain.handle('add-product', async (event, productData) => {
-    const dbPath = path.join(app.getPath('userData'), 'wolo-inventory.db');
-    const db = new Database(dbPath);
-    const now = new Date().toISOString();
-    
-    try {
-      // Check if products table exists, create it if it doesn't
-      try {
-        db.prepare(`
-          CREATE TABLE IF NOT EXISTS products (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            barcode TEXT UNIQUE,
-            category TEXT,
-            category_id TEXT,
-            sku TEXT,
-            total_bulk_cost REAL DEFAULT 0,
-            quantity_purchased INTEGER DEFAULT 0,
-            profit_margin REAL DEFAULT 0,
-            quantity_in_stock INTEGER DEFAULT 0,
-            quantity_on_shelf INTEGER DEFAULT 0,
-            cost_price REAL DEFAULT 0,
-            selling_price REAL DEFAULT 0,
-            manufactured_date TEXT,
-            expiry_date TEXT,
-            photo_path TEXT,
-            reorder_level INTEGER DEFAULT 10,
-            is_active INTEGER DEFAULT 1,
-            supplier_id TEXT,
-            supplier_name TEXT,
-            supplier_contact TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            images TEXT,
-            variants TEXT,
-            notes TEXT,
-            FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-          )
-        `).run();
-      } catch (error) {
-        console.error('Error ensuring products table exists:', error);
-        throw new Error('Failed to initialize products table');
-      }
-      
-      // Basic validation
-      if (!productData.name) {
-        throw new Error('Product name is required');
-      }
-      
-      // Generate a product ID if not provided
-      const productId = productData.id || `prod_${Date.now()}`;
-      
-      // Prepare product with default values
-      const product = {
-        id: productId,
-        name: productData.name,
-        description: productData.description || '',
-        barcode: productData.barcode || null,
-        category: productData.category || null,
-        category_id: productData.category_id || null,
-        sku: productData.sku || `SKU-${Date.now()}`,
-        total_bulk_cost: parseFloat(productData.total_bulk_cost) || 0,
-        quantity_purchased: parseInt(productData.quantity_purchased) || 0,
-        profit_margin: parseFloat(productData.profit_margin) || 0,
-        quantity_in_stock: parseInt(productData.quantity_in_stock) || 0,
-        quantity_on_shelf: parseInt(productData.quantity_on_shelf) || 0,
-        cost_price: parseFloat(productData.cost_price) || 0,
-        selling_price: parseFloat(productData.selling_price) || 0,
-        manufactured_date: productData.manufactured_date || null,
-        expiry_date: productData.expiry_date || null,
-        photo_path: productData.photo_path || null,
-        reorder_level: parseInt(productData.reorder_level) || 10,
-        supplier_id: productData.supplier_id || null,
-        supplier_name: productData.supplier_name || null,
-        supplier_contact: productData.supplier_contact || null,
-        created_at: now,
-        updated_at: now,
-        is_active: 1,
-        images: JSON.stringify(productData.images || []),
-        variants: JSON.stringify(productData.variants || []),
-        notes: productData.notes || ''
-      };
-      
-      // Insert into database
-      const stmt = db.prepare(`
-        INSERT INTO products (
-          id, name, description, barcode, category, category_id, sku,
-          total_bulk_cost, quantity_purchased, profit_margin,
-          quantity_in_stock, quantity_on_shelf, cost_price, selling_price,
-          manufactured_date, expiry_date, photo_path, reorder_level,
-          supplier_id, supplier_name, supplier_contact,
-          created_at, updated_at, is_active, images, variants, notes
-        ) VALUES (
-          @id, @name, @description, @barcode, @category, @category_id, @sku,
-          @total_bulk_cost, @quantity_purchased, @profit_margin,
-          @quantity_in_stock, @quantity_on_shelf, @cost_price, @selling_price,
-          @manufactured_date, @expiry_date, @photo_path, @reorder_level,
-          @supplier_id, @supplier_name, @supplier_contact,
-          @created_at, @updated_at, @is_active, @images, @variants, @notes
-        )
-      `);
-      
-      console.log('Executing insert with product data:', product);
-      const result = stmt.run(product);
-      console.log('Insert result:', result);
-      
-      if (result && result.changes > 0) {
-        const insertedProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
-        console.log('Inserted product from DB:', insertedProduct);
-        
-        if (insertedProduct) {
-          console.log('Product saved successfully with ID:', productId);
-          return { 
-            success: true, 
-            id: productId,
-            productId: productId,
-            message: 'Product saved successfully',
-            data: insertedProduct
-          };
-        } else {
-          throw new Error('Failed to verify product was saved to database');
-        }
-      } else {
-        throw new Error('No rows were inserted into the database');
-      }
-    } catch (error) {
-      console.error('Error in add-product handler:', error);
-      return { 
-        success: false, 
-        error: 'Failed to save product: ' + error.message,
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      };
-    } finally {
-      // Close the database connection
-      if (db) {
-        db.close();
-      }
-    }
-  });
 
   // Handle recording a new sale
   ipcMain.handle('record-sale', async (event, { items, paymentMethod, customerInfo, notes }) => {
-    const db = new Database(dbPath);
+    if (!db) {
+      throw new Error('Database not initialized');
+    }
+    
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      throw new Error('Sale must have at least one item');
+    }
+    
     const now = new Date().toISOString();
-    const saleId = `sale_${Date.now()}`;
+    const saleDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const saleId = `sale_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
       // Start a transaction
       const transaction = db.transaction(() => {
+        const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+        
         // Insert the sale record
         db.prepare(`
-          INSERT INTO sales (id, sale_date, total_amount, payment_method, customer_info, notes, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO sales (id, invoice_number, sale_date, total_amount, payment_method, payment_status, customer_name, notes, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           saleId,
-          now,
-          items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0),
-          paymentMethod,
-          customerInfo ? JSON.stringify(customerInfo) : null,
+          `INV-${Date.now()}`,
+          saleDate,
+          totalAmount,
+          paymentMethod || 'cash',
+          'completed',
+          customerInfo?.name || null,
           notes || null,
           now
         );
 
         // Insert sale items and update inventory
         items.forEach(item => {
-          // Insert sale item
+          // Check if product exists and has enough stock
+          const product = db.prepare('SELECT id, name, quantity_in_stock FROM products WHERE id = ?').get(item.productId);
+          if (!product) {
+            throw new Error(`Product with ID ${item.productId} not found`);
+          }
+          if (product.quantity_in_stock < item.quantity) {
+            throw new Error(`Insufficient stock for product ${item.productId}. Available: ${product.quantity_in_stock}, Requested: ${item.quantity}`);
+          }
+          
+          // Calculate subtotal
+          const subtotal = item.quantity * item.unitPrice;
+          const itemId = `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          // Insert sale item - use subtotal instead of total_price, and include all required fields
           db.prepare(`
-            INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total_price)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, unit_price, subtotal)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
           `).run(
+            itemId,
             saleId,
             item.productId,
+            product.name || 'Unknown Product',
             item.quantity,
             item.unitPrice,
-            item.quantity * item.unitPrice
+            subtotal
           );
 
           // Update product inventory
@@ -1026,37 +871,55 @@ function registerIpcHandlers() {
     } catch (error) {
       console.error('Error recording sale:', error);
       throw error;
-    } finally {
-      if (db) db.close();
     }
   });
 
   ipcMain.handle('get-sales-history', async (event, { startDate, endDate, productId } = {}) => {
     try {
-      let query = 'SELECT * FROM sales';
+      let query = 'SELECT DISTINCT s.* FROM sales s';
       const params = [];
       const conditions = [];
       
+      // If filtering by product, join through sale_items
+      if (productId) {
+        query += ' INNER JOIN sale_items si ON s.id = si.sale_id';
+        conditions.push('si.product_id = ?');
+        params.push(productId);
+      }
+      
       if (startDate) {
-        conditions.push('sale_date >= ?');
+        conditions.push('s.sale_date >= ?');
         params.push(startDate);
       }
       if (endDate) {
-        conditions.push('sale_date <= ?');
+        conditions.push('s.sale_date <= ?');
         params.push(endDate);
-      }
-      if (productId) {
-        conditions.push('product_id = ?');
-        params.push(productId);
       }
       
       if (conditions.length > 0) {
         query += ' WHERE ' + conditions.join(' AND ');
       }
-      query += ' ORDER BY sale_date DESC';
+      query += ' ORDER BY s.sale_date DESC, s.created_at DESC';
       
       const sales = db.prepare(query).all(...params);
-      return sales;
+      
+      // For each sale, get its items
+      const salesWithItems = sales.map(sale => {
+        const items = db.prepare(`
+          SELECT si.*, p.name as product_name, p.barcode
+          FROM sale_items si
+          LEFT JOIN products p ON si.product_id = p.id
+          WHERE si.sale_id = ?
+        `).all(sale.id);
+        
+        return {
+          ...sale,
+          items: items,
+          total_amount: parseFloat(sale.total_amount || 0)
+        };
+      });
+      
+      return salesWithItems;
     } catch (error) {
       console.error('Error fetching sales history:', error);
       throw error;
@@ -1067,13 +930,19 @@ function registerIpcHandlers() {
   ipcMain.handle('get-sales-by-date-range', async (event, { startDate, endDate, productId } = {}) => {
     try {
       let query = `
-        SELECT s.*, p.name as product_name, p.barcode
+        SELECT DISTINCT s.*
         FROM sales s
-        LEFT JOIN products p ON s.product_id = p.id
       `;
       
       const params = [];
       const conditions = [];
+      
+      // If filtering by product, join through sale_items
+      if (productId) {
+        query += ` INNER JOIN sale_items si ON s.id = si.sale_id `;
+        conditions.push('si.product_id = ?');
+        params.push(productId);
+      }
       
       if (startDate) {
         conditions.push('s.sale_date >= ?');
@@ -1085,11 +954,6 @@ function registerIpcHandlers() {
         params.push(endDate);
       }
       
-      if (productId) {
-        conditions.push('s.product_id = ?');
-        params.push(productId);
-      }
-      
       if (conditions.length > 0) {
         query += ' WHERE ' + conditions.join(' AND ');
       }
@@ -1097,11 +961,29 @@ function registerIpcHandlers() {
       query += ' ORDER BY s.sale_date DESC';
       
       const sales = db.prepare(query).all(...params);
+      
+      // If productId is specified, also get product details for each sale
+      if (productId) {
+        const salesWithItems = sales.map(sale => {
+          const items = db.prepare(`
+            SELECT si.*, p.name as product_name, p.barcode
+            FROM sale_items si
+            LEFT JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = ? AND si.product_id = ?
+          `).all(sale.id, productId);
+          
+          return {
+            ...sale,
+            total_amount: parseFloat(sale.total_amount || 0),
+            items: items
+          };
+        });
+        return salesWithItems;
+      }
+      
       return sales.map(sale => ({
         ...sale,
-        total_amount: parseFloat(sale.total_amount || 0),
-        unit_price: parseFloat(sale.unit_price || 0),
-        quantity_sold: parseInt(sale.quantity_sold || 0)
+        total_amount: parseFloat(sale.total_amount || 0)
       }));
     } catch (error) {
       console.error('Error fetching sales by date range:', error);
@@ -1212,6 +1094,92 @@ function registerIpcHandlers() {
       throw error;
     }
   });
+
+  // Backup and Restore Handlers
+  ipcMain.handle('create-backup', async () => {
+    try {
+      const dbPath = path.join(app.getPath('userData'), 'wolo-inventory.db');
+      const backupDir = path.join(app.getPath('userData'), 'backups');
+      
+      // Create backups directory if it doesn't exist
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupDir, `wolo-inventory-backup-${timestamp}.db`);
+      
+      // Copy database file
+      fs.copyFileSync(dbPath, backupPath);
+      
+      return { success: true, path: backupPath };
+    } catch (error) {
+      console.error('Error creating backup:', error);
+      return { success: false, error: error.message || 'Failed to create backup' };
+    }
+  });
+
+  ipcMain.handle('restore-backup', async (event, { backupPath }) => {
+    try {
+      if (!backupPath || !fs.existsSync(backupPath)) {
+        return { success: false, error: 'Backup file not found' };
+      }
+      
+      const dbPath = path.join(app.getPath('userData'), 'wolo-inventory.db');
+      
+      // Close current database connection
+      if (db) {
+        db.close();
+        db = null;
+      }
+      
+      // Copy backup to database location
+      fs.copyFileSync(backupPath, dbPath);
+      
+      // Reopen database connection
+      db = new Database(dbPath);
+      db.pragma('foreign_keys = ON');
+      db.pragma('journal_mode = WAL');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error restoring backup:', error);
+      return { success: false, error: error.message || 'Failed to restore backup' };
+    }
+  });
+
+  // System Handlers
+  ipcMain.handle('get-app-version', async () => {
+    try {
+      const packageJson = require('./package.json');
+      return { success: true, version: packageJson.version || '1.0.0' };
+    } catch (error) {
+      console.error('Error getting app version:', error);
+      return { success: false, version: '1.0.0', error: error.message };
+    }
+  });
+
+  ipcMain.handle('check-for-updates', async () => {
+    try {
+      // Placeholder for update checking - can be implemented with auto-updater
+      return { success: true, updateAvailable: false, message: 'No updates available' };
+    } catch (error) {
+      console.error('Error checking for updates:', error);
+      return { success: false, error: error.message || 'Failed to check for updates' };
+    }
+  });
+
+  ipcMain.handle('install-update', async () => {
+    try {
+      // Placeholder for update installation
+      return { success: false, error: 'Auto-update not implemented yet' };
+    } catch (error) {
+      console.error('Error installing update:', error);
+      return { success: false, error: error.message || 'Failed to install update' };
+    }
+  });
+  
+  console.log('IPC handler registration completed successfully');
 }
 
 // Renderer-only UI helpers for reports (moved to renderer.js). main.js should
@@ -1568,15 +1536,7 @@ function initDatabase() {
     }
   }
   
-  // Create settings table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    )
-  `);
-
-  // Initialize developer mode setting if not exists
+  // Initialize developer mode setting if not exists (settings table already created above)
   try {
     const devMode = db.prepare('SELECT value FROM settings WHERE key = ?').get('developer_mode');
     if (!devMode) {
@@ -1586,22 +1546,7 @@ function initDatabase() {
     console.error('Error initializing developer mode setting:', e);
   }
   
-  // Create suppliers table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS suppliers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      contact_person TEXT,
-      email TEXT,
-      phone TEXT,
-      address TEXT,
-      tax_id TEXT,
-      payment_terms TEXT,
-      notes TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  // Suppliers table already created above, no need to recreate
   
       // Create sales table
       console.log('Creating sales table...');
@@ -1656,59 +1601,80 @@ function initDatabase() {
         if (!saleItemsTableCheck) {
           throw new Error('Failed to create sale_items table');
         }
-        
-        // Create other necessary tables here...
+      } catch (error) {
+        console.error('Error during sale_items table creation:', error);
+        // Only rollback if transaction is still active
+        if (db) {
+          try {
+            db.exec('ROLLBACK');
+          } catch (rollbackError) {
+            // Ignore rollback errors (transaction might already be committed/rolled back)
+            if (!rollbackError.message.includes('no transaction is active')) {
+              console.error('Error during rollback:', rollbackError);
+            }
+          }
+        }
+        throw error;
+      }
       
       // Commit the transaction if everything succeeded
       db.exec('COMMIT');
       console.log('Database schema updated successfully');
       
-      } catch (error) {
-        console.error('Error during database initialization:', error);
-        if (db) {
-          db.exec('ROLLBACK');
+      // Check if sale_timestamp column exists in sales table (outside transaction)
+      try {
+        const salesColumns = db.prepare("PRAGMA table_info(sales)").all();
+        const hasSaleTimestamp = salesColumns.some(col => col.name === 'sale_timestamp');
+        
+        if (!hasSaleTimestamp) {
+          executeSql('ALTER TABLE sales ADD COLUMN sale_timestamp TEXT DEFAULT CURRENT_TIMESTAMP');
+          console.log('Added sale_timestamp column to sales table');
         }
-        throw error;
+      } catch (error) {
+        console.warn('Could not add sale_timestamp column (it might already exist):', error.message);
       }
       
-      } catch (error) {
-        // Rollback the transaction on error
-        console.error('Error during database initialization:', error);
-        if (db) {
-          db.exec('ROLLBACK');
-        }
-        throw error; // Re-throw to be caught by the Promise's catch
-      }
-        
-        // Register IPC handlers after database is ready
+      // Register IPC handlers after database is ready (outside transaction, with separate error handling)
+      // This MUST happen before window creation to prevent race conditions
+      try {
         if (!ipcHandlersInitialized) {
+          console.log('Registering IPC handlers before window creation...');
           registerIpcHandlers();
           ipcHandlersInitialized = true;
+          console.log('IPC handlers registered successfully');
+        } else {
+          console.log('IPC handlers already registered');
         }
-        
-        // Check if sale_timestamp column exists in sales table
-        try {
-          const salesColumns = db.prepare("PRAGMA table_info(sales)").all();
-          const hasSaleTimestamp = salesColumns.some(col => col.name === 'sale_timestamp');
-          
-          if (!hasSaleTimestamp) {
-            executeSql('ALTER TABLE sales ADD COLUMN sale_timestamp TEXT DEFAULT CURRENT_TIMESTAMP');
-            console.log('Added sale_timestamp column to sales table');
-          }
-        } catch (error) {
-          console.warn('Could not add sale_timestamp column (it might already exist):', error.message);
-        }
-        
-        resolve(db);
-        
+      } catch (ipcError) {
+        // Log IPC handler registration errors but don't fail database initialization
+        console.error('Error registering IPC handlers:', ipcError);
+        console.error('IPC handler registration stack:', ipcError.stack);
+        // Re-throw to ensure we know about the error - this is critical
+        throw ipcError;
+      }
+      
+      resolve(db);
+      
       } catch (error) {
-        // Rollback the transaction on error
-        console.error('Error in sale_items table creation:', error);
+        // Rollback the transaction on error (only if transaction is active)
+        console.error('Error during database initialization:', error);
         if (db) {
-          db.exec('ROLLBACK');
+          try {
+            db.exec('ROLLBACK');
+          } catch (rollbackError) {
+            // Ignore rollback errors (transaction might already be committed/rolled back)
+            if (!rollbackError.message.includes('no transaction is active')) {
+              console.error('Error during rollback:', rollbackError);
+            }
+          }
         }
         reject(error);
       }
+    } catch (error) {
+      // Catch any errors from the outer try block (database connection, etc.)
+      console.error('Error initializing database connection:', error);
+      reject(error);
+    }
   });
 }
 

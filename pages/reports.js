@@ -1,15 +1,24 @@
 // Reports page functionality
 const { ipcRenderer } = window.electron || {};
 import { reports, products } from '../core/api.js';
-import { showToast } from '../core/utils.js';
+import { showToast, formatCurrency, formatDate } from '../core/utils.js';
 
 // Global variables
 let chart1 = null;
 let chart2 = null;
 
+// Prevent duplicate initialization
+let reportsPageInitialized = false;
+
 // Initialize the reports page
-document.addEventListener('DOMContentLoaded', async () => {
+async function initializeReportsPage() {
+    if (reportsPageInitialized) {
+        console.warn('Reports page already initialized, skipping...');
+        return;
+    }
+    
     try {
+        reportsPageInitialized = true;
         initializeDatePickers();
         setupEventListeners();
         await loadReportCategories();
@@ -19,23 +28,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         const lastMonth = new Date();
         lastMonth.setMonth(today.getMonth() - 1);
         
-        document.getElementById('reportStartDate').valueAsDate = lastMonth;
-        document.getElementById('reportEndDate').valueAsDate = today;
+        const startDateEl = document.getElementById('reportStartDate');
+        const endDateEl = document.getElementById('reportEndDate');
+        if (startDateEl) startDateEl.valueAsDate = lastMonth;
+        if (endDateEl) endDateEl.valueAsDate = today;
         
         // Initialize event listeners for report type changes
-        document.getElementById('reportType').addEventListener('change', updateReportForm);
+        const reportTypeEl = document.getElementById('reportType');
+        if (reportTypeEl) {
+            reportTypeEl.addEventListener('change', updateReportForm);
+        }
         
         // Add event listener for generate report button
-        document.getElementById('generateReportBtn').addEventListener('click', generateReport);
+        const generateBtn = document.getElementById('generateReportBtn');
+        if (generateBtn) {
+            generateBtn.addEventListener('click', generateReport);
+        }
         
         // Initialize the form
         updateReportForm();
         
+        console.log('Reports page initialized successfully');
     } catch (error) {
         console.error('Error initializing reports page:', error);
         showToast('Failed to initialize reports page', 'danger');
+        reportsPageInitialized = false;
     }
-});
+}
+
+// Initialize on DOM ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeReportsPage);
+} else {
+    initializeReportsPage();
+}
 
 // Initialize date pickers
 function initializeDatePickers() {
@@ -45,10 +71,11 @@ function initializeDatePickers() {
 
 // Set up event listeners
 function setupEventListeners() {
-    // Export buttons
-    document.getElementById('exportPDFBtn')?.addEventListener('click', () => exportReport('pdf'));
+    // Export buttons - check for both naming conventions
+    document.getElementById('exportPdfBtn')?.addEventListener('click', () => exportReport('pdf'));
+    document.getElementById('exportPdfBtn2')?.addEventListener('click', () => exportReport('pdf'));
     document.getElementById('exportExcelBtn')?.addEventListener('click', () => exportReport('excel'));
-    document.getElementById('exportCSVBtn')?.addEventListener('click', () => exportReport('csv'));
+    document.getElementById('exportCsvBtn')?.addEventListener('click', () => exportReport('csv'));
     
     // Print button
     document.getElementById('printReportBtn')?.addEventListener('click', () => window.print());
@@ -234,8 +261,11 @@ async function generateReport() {
                     throw new Error('Unsupported report type');
             }
             
+            // Ensure reportData is an array
+            const processedData = Array.isArray(reportData) ? reportData : (reportData?.data || []);
+            
             // Render the report
-            await renderReport(reportType, reportData);
+            await renderReport(reportType, processedData);
             
             // Update the report title
             const reportTitleElement = document.getElementById('reportTitle');
@@ -243,8 +273,16 @@ async function generateReport() {
                 reportTitleElement.textContent = reportTitle;
             }
             
-            // Show the report container
+            // Show the report container and summary
             document.getElementById('reportContainer').style.display = 'block';
+            const reportSummary = document.getElementById('reportSummary');
+            if (reportSummary) {
+                reportSummary.style.display = 'flex';
+            }
+            const exportButtons = document.getElementById('exportButtons');
+            if (exportButtons) {
+                exportButtons.style.display = 'flex';
+            }
             
         } catch (error) {
             console.error('Error generating report:', error);
@@ -328,25 +366,50 @@ async function renderSalesReport(data) {
             </tr>
         `;
         
+        // Ensure data is an array
+        const salesData = Array.isArray(data) ? data : (data?.data || []);
+        
+        if (salesData.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-center">No sales data found for the selected period</td></tr>';
+            return;
+        }
+        
         // Add table rows
         let totalSales = 0;
         let totalItems = 0;
         
-        data.forEach(sale => {
+        salesData.forEach(sale => {
+            // Handle different data structures
+            const saleDate = sale.sale_date || sale.date || sale.created_at || new Date();
+            const invoiceNumber = sale.invoice_number || sale.orderId || sale.id || 'N/A';
+            const customerName = sale.customer_name || sale.customerName || 'Walk-in';
+            const totalAmount = parseFloat(sale.total_amount || sale.total || 0);
+            
+            // Count items - check if items array exists or if we need to query sale_items
+            let itemCount = 0;
+            if (sale.items && Array.isArray(sale.items)) {
+                itemCount = sale.items.length;
+            } else if (sale.item_count) {
+                itemCount = sale.item_count;
+            } else {
+                // Try to get from sale_items if available
+                itemCount = sale.sale_items?.length || 1; // Default to 1 if unknown
+            }
+            
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td>${new Date(sale.date).toLocaleDateString()}</td>
-                <td>${sale.orderId || 'N/A'}</td>
-                <td>${sale.customerName || 'Walk-in'}</td>
-                <td>${sale.items?.length || 0}</td>
-                <td>GH₵ ${(sale.total || 0).toFixed(2)}</td>
-                <td><span class="badge bg-success">${sale.status || 'Completed'}</span></td>
+                <td>${new Date(saleDate).toLocaleDateString()}</td>
+                <td>${invoiceNumber}</td>
+                <td>${customerName}</td>
+                <td>${itemCount}</td>
+                <td>${formatCurrency(totalAmount)}</td>
+                <td><span class="badge bg-success">${sale.payment_status || sale.status || 'Completed'}</span></td>
             `;
             tableBody.appendChild(row);
             
             // Update totals
-            totalSales += parseFloat(sale.total || 0);
-            totalItems += parseInt(sale.items?.length || 0);
+            totalSales += totalAmount;
+            totalItems += itemCount;
         });
         
         // Add footer with totals
@@ -354,17 +417,23 @@ async function renderSalesReport(data) {
             <tr class="table-active">
                 <td colspan="3" class="text-end"><strong>Total:</strong></td>
                 <td><strong>${totalItems} items</strong></td>
-                <td><strong>GH₵ ${totalSales.toFixed(2)}</strong></td>
+                <td><strong>${formatCurrency(totalSales)}</strong></td>
                 <td></td>
             </tr>
         `;
         
         // Update summary cards
         updateSummaryCards({
-            totalProducts: data.length,
-            totalInStock: data.reduce((sum, item) => sum + (item.items?.length || 0), 0),
+            totalProducts: salesData.length,
+            totalInStock: totalItems,
             totalSales: totalSales
         });
+        
+        // Update report generated date
+        const reportGeneratedDate = document.getElementById('reportGeneratedDate');
+        if (reportGeneratedDate) {
+            reportGeneratedDate.textContent = new Date().toLocaleString();
+        }
         
     } catch (error) {
         console.error('Error rendering sales report:', error);
@@ -400,20 +469,44 @@ async function renderInventoryReport(data) {
         let outOfStockCount = 0;
         let lowStockCount = 0;
         
-        data.forEach(item => {
-            const inStock = parseInt(item.quantityInStock) || 0;
-            const price = parseFloat(item.sellingPrice) || 0;
-            const value = inStock * price;
+        // Ensure data is an array
+        const productsData = Array.isArray(data) ? data : (data?.data || []);
+        
+        if (productsData.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="7" class="text-center">No inventory data found</td></tr>';
+            return;
+        }
+        
+        productsData.forEach(item => {
+            // Handle both snake_case and camelCase field names
+            const inStock = parseInt(item.quantity_in_stock || item.quantityInStock || 0);
+            const sellingPrice = parseFloat(item.selling_price || item.sellingPrice || 0);
+            const costPrice = parseFloat(item.cost_price || item.costPrice || item.purchase_price || 0);
+            
+            // Calculate value using cost price for inventory value
+            let value = inStock * costPrice;
+            
+            // If cost_price is 0, try to calculate from total_bulk_cost
+            if (costPrice === 0 || isNaN(costPrice)) {
+                const totalBulkCost = parseFloat(item.total_bulk_cost || item.totalBulkCost || 0);
+                const quantityPurchased = parseFloat(item.quantity_purchased || item.quantityPurchased || 0);
+                if (totalBulkCost > 0 && quantityPurchased > 0) {
+                    const unitCost = totalBulkCost / quantityPurchased;
+                    value = inStock * unitCost;
+                }
+            }
             
             // Update counts
             totalValue += value;
             totalItems += inStock;
             
+            const reorderLevel = parseInt(item.reorder_level || item.reorderLevel || item.low_stock_threshold || 5);
+            
             if (inStock === 0) outOfStockCount++;
-            else if (inStock <= (parseInt(item.reorderLevel) || 5)) lowStockCount++;
+            else if (inStock <= reorderLevel) lowStockCount++;
             
             const statusClass = inStock === 0 ? 'bg-danger' : 
-                              inStock <= (parseInt(item.reorderLevel) || 5) ? 'bg-warning' : 'bg-success';
+                              inStock <= reorderLevel ? 'bg-warning' : 'bg-success';
             
             const row = document.createElement('tr');
             row.innerHTML = `
@@ -421,10 +514,10 @@ async function renderInventoryReport(data) {
                 <td>${item.category || 'Uncategorized'}</td>
                 <td>${item.sku || 'N/A'}</td>
                 <td>${inStock}</td>
-                <td>GH₵ ${price.toFixed(2)}</td>
-                <td>GH₵ ${value.toFixed(2)}</td>
+                <td>${formatCurrency(sellingPrice)}</td>
+                <td>${formatCurrency(value)}</td>
                 <td><span class="badge ${statusClass}">
-                    ${inStock === 0 ? 'Out of Stock' : inStock <= (parseInt(item.reorderLevel) || 5) ? 'Low Stock' : 'In Stock'}
+                    ${inStock === 0 ? 'Out of Stock' : inStock <= reorderLevel ? 'Low Stock' : 'In Stock'}
                 </span></td>
             `;
             tableBody.appendChild(row);
@@ -436,19 +529,25 @@ async function renderInventoryReport(data) {
                 <td colspan="3" class="text-end"><strong>Total:</strong></td>
                 <td><strong>${totalItems} items</strong></td>
                 <td></td>
-                <td><strong>GH₵ ${totalValue.toFixed(2)}</strong></td>
+                <td><strong>${formatCurrency(totalValue)}</strong></td>
                 <td></td>
             </tr>
         `;
         
         // Update summary cards
         updateSummaryCards({
-            totalProducts: data.length,
+            totalProducts: productsData.length,
             totalInStock: totalItems,
             totalLowStock: lowStockCount,
             totalOutOfStock: outOfStockCount,
             totalValue: totalValue
         });
+        
+        // Update report generated date
+        const reportGeneratedDate = document.getElementById('reportGeneratedDate');
+        if (reportGeneratedDate) {
+            reportGeneratedDate.textContent = new Date().toLocaleString();
+        }
         
     } catch (error) {
         console.error('Error rendering inventory report:', error);
@@ -458,9 +557,6 @@ async function renderInventoryReport(data) {
 
 // Render low stock report
 async function renderLowStockReport(data) {
-    // Sort by quantity ascending
-    data.sort((a, b) => (parseInt(a.quantityInStock) || 0) - (parseInt(b.quantityInStock) || 0));
-    
     const tableHeader = document.getElementById('reportTableHeader');
     const tableBody = document.getElementById('reportTableBody');
     const tableFooter = document.getElementById('reportTableFooter');
@@ -468,6 +564,21 @@ async function renderLowStockReport(data) {
     if (!tableHeader || !tableBody || !tableFooter) return;
     
     try {
+        // Ensure data is an array
+        const lowStockData = Array.isArray(data) ? data : (data?.data || []);
+        
+        if (lowStockData.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="7" class="text-center">No low stock items found</td></tr>';
+            return;
+        }
+        
+        // Sort by quantity ascending
+        lowStockData.sort((a, b) => {
+            const qtyA = parseInt(a.quantity_in_stock || a.quantityInStock || 0);
+            const qtyB = parseInt(b.quantity_in_stock || b.quantityInStock || 0);
+            return qtyA - qtyB;
+        });
+        
         // Set up table headers
         tableHeader.innerHTML = `
             <tr>
@@ -482,9 +593,9 @@ async function renderLowStockReport(data) {
         `;
         
         // Add table rows
-        data.forEach(item => {
-            const inStock = parseInt(item.quantityInStock) || 0;
-            const reorderLevel = parseInt(item.reorderLevel) || 5;
+        lowStockData.forEach(item => {
+            const inStock = parseInt(item.quantity_in_stock || item.quantityInStock || 0);
+            const reorderLevel = parseInt(item.reorder_level || item.reorderLevel || item.low_stock_threshold || 5);
             const statusClass = inStock === 0 ? 'bg-danger' : 'bg-warning';
             
             const row = document.createElement('tr');
@@ -499,7 +610,7 @@ async function renderLowStockReport(data) {
                 </span></td>
                 <td>
                     <button class="btn btn-sm btn-outline-primary" 
-                            onclick="navigateTo('product-form', { id: '${item.id}' })">
+                            onclick="editProduct('${item.id}')">
                         Reorder
                     </button>
                 </td>
@@ -508,20 +619,29 @@ async function renderLowStockReport(data) {
         });
         
         // Add footer with counts
+        const lowStockCount = lowStockData.filter(item => (parseInt(item.quantity_in_stock || item.quantityInStock || 0) > 0)).length;
+        const outOfStockCount = lowStockData.filter(item => (parseInt(item.quantity_in_stock || item.quantityInStock || 0) === 0)).length;
+        
         tableFooter.innerHTML = `
             <tr class="table-active">
                 <td colspan="7" class="text-end">
-                    <strong>Total Low/Out of Stock Items: ${data.length}</strong>
+                    <strong>Total Low/Out of Stock Items: ${lowStockData.length} (${lowStockCount} low stock, ${outOfStockCount} out of stock)</strong>
                 </td>
             </tr>
         `;
         
         // Update summary cards
         updateSummaryCards({
-            totalProducts: data.length,
-            totalLowStock: data.filter(item => (parseInt(item.quantityInStock) || 0) > 0).length,
-            totalOutOfStock: data.filter(item => (parseInt(item.quantityInStock) || 0) === 0).length
+            totalProducts: lowStockData.length,
+            totalLowStock: lowStockCount,
+            totalOutOfStock: outOfStockCount
         });
+        
+        // Update report generated date
+        const reportGeneratedDate = document.getElementById('reportGeneratedDate');
+        if (reportGeneratedDate) {
+            reportGeneratedDate.textContent = new Date().toLocaleString();
+        }
         
     } catch (error) {
         console.error('Error rendering low stock report:', error);
@@ -531,9 +651,6 @@ async function renderLowStockReport(data) {
 
 // Render expiring products report
 async function renderExpiringProductsReport(data) {
-    // Sort by expiry date ascending
-    data.sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
-    
     const tableHeader = document.getElementById('reportTableHeader');
     const tableBody = document.getElementById('reportTableBody');
     const tableFooter = document.getElementById('reportTableFooter');
@@ -541,11 +658,26 @@ async function renderExpiringProductsReport(data) {
     if (!tableHeader || !tableBody || !tableFooter) return;
     
     try {
+        // Ensure data is an array
+        const expiringData = Array.isArray(data) ? data : (data?.data || []);
+        
+        if (expiringData.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-center">No expiring products found for the selected period</td></tr>';
+            return;
+        }
+        
+        // Sort by expiry date ascending
+        expiringData.sort((a, b) => {
+            const dateA = new Date(a.expiry_date || a.expiryDate || 0);
+            const dateB = new Date(b.expiry_date || b.expiryDate || 0);
+            return dateA - dateB;
+        });
+        
         // Set up table headers
         tableHeader.innerHTML = `
             <tr>
                 <th>Product</th>
-                <th>Batch/Lot</th>
+                <th>Category</th>
                 <th>Expiry Date</th>
                 <th>Days Until Expiry</th>
                 <th>In Stock</th>
@@ -557,8 +689,12 @@ async function renderExpiringProductsReport(data) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
-        data.forEach(item => {
-            const expiryDate = new Date(item.expiryDate);
+        expiringData.forEach(item => {
+            const expiryDateStr = item.expiry_date || item.expiryDate;
+            if (!expiryDateStr) return; // Skip items without expiry date
+            
+            const expiryDate = new Date(expiryDateStr);
+            expiryDate.setHours(0, 0, 0, 0);
             const timeDiff = expiryDate - today;
             const daysUntilExpiry = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
             
@@ -568,31 +704,42 @@ async function renderExpiringProductsReport(data) {
             if (daysUntilExpiry <= 0) {
                 statusClass = 'bg-danger';
                 statusText = 'Expired';
+            } else if (daysUntilExpiry <= 7) {
+                statusClass = 'bg-danger';
+                statusText = 'Expiring Soon';
             } else if (daysUntilExpiry <= 30) {
                 statusClass = 'bg-warning';
                 statusText = 'Expiring Soon';
             }
             
+            const inStock = parseInt(item.quantity_in_stock || item.quantityInStock || 0);
+            
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td>${item.productName || 'N/A'}</td>
-                <td>${item.batchNumber || 'N/A'}</td>
+                <td>${item.name || 'N/A'}</td>
+                <td>${item.category || 'Uncategorized'}</td>
                 <td>${expiryDate.toLocaleDateString()}</td>
                 <td>${daysUntilExpiry} days</td>
-                <td>${item.quantityInStock || 0}</td>
+                <td>${inStock}</td>
                 <td><span class="badge ${statusClass}">${statusText}</span></td>
             `;
             tableBody.appendChild(row);
         });
         
         // Add footer with counts
-        const expiredCount = data.filter(item => {
-            const expiryDate = new Date(item.expiryDate);
+        const expiredCount = expiringData.filter(item => {
+            const expiryDateStr = item.expiry_date || item.expiryDate;
+            if (!expiryDateStr) return false;
+            const expiryDate = new Date(expiryDateStr);
+            expiryDate.setHours(0, 0, 0, 0);
             return expiryDate < today;
         }).length;
         
-        const expiringSoonCount = data.filter(item => {
-            const expiryDate = new Date(item.expiryDate);
+        const expiringSoonCount = expiringData.filter(item => {
+            const expiryDateStr = item.expiry_date || item.expiryDate;
+            if (!expiryDateStr) return false;
+            const expiryDate = new Date(expiryDateStr);
+            expiryDate.setHours(0, 0, 0, 0);
             const timeDiff = expiryDate - today;
             const daysUntilExpiry = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
             return daysUntilExpiry > 0 && daysUntilExpiry <= 30;
@@ -601,17 +748,23 @@ async function renderExpiringProductsReport(data) {
         tableFooter.innerHTML = `
             <tr class="table-active">
                 <td colspan="6" class="text-end">
-                    <strong>Total: ${data.length} items (${expiredCount} expired, ${expiringSoonCount} expiring soon)</strong>
+                    <strong>Total: ${expiringData.length} items (${expiredCount} expired, ${expiringSoonCount} expiring soon)</strong>
                 </td>
             </tr>
         `;
         
         // Update summary cards
         updateSummaryCards({
-            totalProducts: data.length,
+            totalProducts: expiringData.length,
             totalExpired: expiredCount,
             totalExpiringSoon: expiringSoonCount
         });
+        
+        // Update report generated date
+        const reportGeneratedDate = document.getElementById('reportGeneratedDate');
+        if (reportGeneratedDate) {
+            reportGeneratedDate.textContent = new Date().toLocaleString();
+        }
         
     } catch (error) {
         console.error('Error rendering expiring products report:', error);
@@ -683,46 +836,8 @@ function updateCharts(stats = {}) {
         
         if (!ctx1 || !ctx2) return;
         
-        // Example chart 1: Inventory by Category (Pie chart)
+        // Chart 1: Stock Status (Doughnut chart) - use actual stats
         chart1 = new Chart(ctx1, {
-            type: 'pie',
-            data: {
-                labels: ['Medicines', 'Supplements', 'Personal Care', 'First Aid', 'Other'],
-                datasets: [{
-                    data: [25, 20, 15, 10, 5], // Example data - replace with actual data
-                    backgroundColor: [
-                        '#4e73df',
-                        '#1cc88a',
-                        '#36b9cc',
-                        '#f6c23e',
-                        '#e74a3b'
-                    ],
-                    hoverBackgroundColor: [
-                        '#2e59d9',
-                        '#17a673',
-                        '#2c9faf',
-                        '#dda20a',
-                        '#be2617'
-                    ],
-                    hoverBorderColor: 'rgba(234, 236, 244, 1)',
-                }]
-            },
-            options: {
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'right',
-                    },
-                    title: {
-                        display: true,
-                        text: 'Inventory by Category'
-                    }
-                }
-            }
-        });
-        
-        // Example chart 2: Stock Status (Doughnut chart)
-        chart2 = new Chart(ctx2, {
             type: 'doughnut',
             data: {
                 labels: ['In Stock', 'Low Stock', 'Out of Stock'],
@@ -752,6 +867,59 @@ function updateCharts(stats = {}) {
             }
         });
         
+        // Chart 2: Sales or Inventory Value (Bar chart) - show relevant data
+        const chart2Data = stats.totalSales ? {
+            labels: ['Total Sales'],
+            datasets: [{
+                label: 'Sales Amount',
+                data: [stats.totalSales],
+                backgroundColor: '#4e73df',
+                hoverBackgroundColor: '#2e59d9',
+            }]
+        } : stats.totalValue ? {
+            labels: ['Total Inventory Value'],
+            datasets: [{
+                label: 'Inventory Value',
+                data: [stats.totalValue],
+                backgroundColor: '#1cc88a',
+                hoverBackgroundColor: '#17a673',
+            }]
+        } : {
+            labels: ['No Data'],
+            datasets: [{
+                label: 'Value',
+                data: [0],
+                backgroundColor: '#e74a3b',
+            }]
+        };
+        
+        chart2 = new Chart(ctx2, {
+            type: 'bar',
+            data: chart2Data,
+            options: {
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false,
+                    },
+                    title: {
+                        display: true,
+                        text: stats.totalSales ? 'Total Sales' : stats.totalValue ? 'Inventory Value' : 'No Data'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return formatCurrency(value);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
     } catch (error) {
         console.error('Error updating charts:', error);
     }
@@ -766,27 +934,43 @@ async function exportReport(format = 'pdf') {
             return;
         }
         
+        // Get the report data from the table
+        const tableBody = document.getElementById('reportTableBody');
+        if (!tableBody || tableBody.children.length === 0) {
+            showToast('No report data to export', 'warning');
+            return;
+        }
+        
         // Show loading state
-        const exportBtn = document.querySelector(`#export${format.toUpperCase()}Btn`);
+        const exportBtn = document.querySelector(`#export${format.charAt(0).toUpperCase() + format.slice(1)}Btn`) || 
+                         document.querySelector(`#export${format.charAt(0).toUpperCase() + format.slice(1)}Btn2`);
+        
         if (exportBtn) {
             const originalText = exportBtn.innerHTML;
             exportBtn.disabled = true;
             exportBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Exporting...';
             
-            // Simulate export (replace with actual export logic)
-            setTimeout(() => {
+            try {
+                if (format === 'excel' && reportType === 'sales') {
+                    // Use the existing Excel export for sales
+                    const startDate = document.getElementById('reportStartDate')?.value || '';
+                    const endDate = document.getElementById('reportEndDate')?.value || '';
+                    const category = document.getElementById('reportCategory')?.value || '';
+                    
+                    await reports.exportSalesToExcel({ startDate, endDate, category });
+                    showToast('Report exported to Excel successfully', 'success');
+                } else {
+                    // For other formats or report types, show a message
+                    showToast(`${format.toUpperCase()} export is not yet implemented for ${reportType} reports`, 'info');
+                }
+            } catch (error) {
+                console.error('Error exporting report:', error);
+                showToast(`Failed to export report: ${error.message || 'Unknown error'}`, 'danger');
+            } finally {
                 // Reset button
                 exportBtn.disabled = false;
                 exportBtn.innerHTML = originalText;
-                
-                // Show success message
-                showToast(`Report exported as ${format.toUpperCase()} successfully`, 'success');
-            }, 1500);
-            
-            // TODO: Implement actual export logic based on format
-            // This is a placeholder that would be replaced with actual export functionality
-            console.log(`Exporting ${reportType} report as ${format}`);
-            
+            }
         }
     } catch (error) {
         console.error('Error exporting report:', error);

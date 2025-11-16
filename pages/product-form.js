@@ -59,20 +59,40 @@ async function initializeForm() {
     showLoading(true, 'form-loading');
     
     try {
-        // If we're editing an existing product, load its data
+        // Check for product ID from URL params or hash
+        let productId = null;
         const urlParams = new URLSearchParams(window.location.search);
-        const productId = urlParams.get('id');
+        productId = urlParams.get('id');
+        
+        // Also check hash for product ID
+        if (!productId && window.location.hash) {
+            const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            productId = hashParams.get('id');
+        }
+        
+        // Listen for product-edit event
+        window.addEventListener('product-edit', async (event) => {
+            if (event.detail && event.detail.productId) {
+                await loadProductForEditing(event.detail.productId);
+            }
+        });
+        
         const isEdit = !!productId;
         
         if (productId) {
             await loadProductForEditing(productId);
         } else {
             // For new products, generate a unique ID using uuid
-            document.getElementById('productId').value = uuidv4();
+            const productIdEl = document.getElementById('productId');
+            if (productIdEl) {
+                productIdEl.value = uuidv4();
+            }
         }
         
         // Initialize variant management
-        initializeVariantManagement();
+        if (typeof initializeVariantManagement === 'function') {
+            initializeVariantManagement();
+        }
         
     } catch (error) {
         console.error('Error initializing form:', error);
@@ -88,17 +108,45 @@ async function loadInitialData() {
         showLoading(true, 'initial-data');
         console.log('Loading initial data...');
         
-        // Load categories and suppliers in parallel
-        const [categoriesResponse, suppliersResponse] = await Promise.all([
-            categories.getAll().catch(err => {
-                console.error('Error loading categories:', err);
-                return [];
-            }),
-            suppliers.getAll().catch(err => {
+        // Load categories from products (since categories are stored in products table)
+        // and suppliers in parallel
+        let categoriesResponse = [];
+        try {
+            // Try to get categories from products API
+            const productsResponse = await products.getAll().catch(() => []);
+            if (Array.isArray(productsResponse)) {
+                // Extract unique categories from products
+                const categorySet = new Set();
+                productsResponse.forEach(product => {
+                    if (product.category && product.category.trim()) {
+                        categorySet.add(product.category.trim());
+                    }
+                });
+                categoriesResponse = Array.from(categorySet).map(cat => ({ name: cat, id: cat }));
+            }
+        } catch (err) {
+            console.error('Error loading categories from products:', err);
+        }
+        
+        // Try to get categories from categories API if available
+        if (categories && typeof categories.getAll === 'function') {
+            try {
+                const apiCategories = await categories.getAll();
+                if (Array.isArray(apiCategories) && apiCategories.length > 0) {
+                    categoriesResponse = apiCategories;
+                }
+            } catch (err) {
+                console.warn('Categories API not available, using categories from products');
+            }
+        }
+        
+        // Load suppliers
+        const suppliersResponse = await (suppliers && typeof suppliers.getAll === 'function' 
+            ? suppliers.getAll().catch(err => {
                 console.error('Error loading suppliers:', err);
                 return [];
             })
-        ]);
+            : Promise.resolve([]));
         
         // Log the responses for debugging
         console.log('Categories response:', categoriesResponse);
@@ -109,7 +157,9 @@ async function loadInitialData() {
             console.warn('Invalid categories data received:', categoriesResponse);
             showToast('Failed to load categories. Using empty list.', 'warning');
         } else {
+            // Populate category dropdown and datalist
             populateDropdown('category', categoriesResponse, 'name', 'id');
+            populateCategoryDatalist(categoriesResponse);
         }
         
         if (!Array.isArray(suppliersResponse)) {
@@ -131,7 +181,10 @@ async function loadInitialData() {
 // Populate dropdown with data
 function populateDropdown(selectId, data, displayField, valueField = 'id') {
     const select = document.getElementById(selectId);
-    if (!select) return;
+    if (!select) {
+        console.warn(`Dropdown element with ID '${selectId}' not found`);
+        return;
+    }
     
     // Save current value
     const currentValue = select.value;
@@ -144,7 +197,7 @@ function populateDropdown(selectId, data, displayField, valueField = 'id') {
     // Add options from data
     data.forEach(item => {
         const option = document.createElement('option');
-        option.value = item[valueField];
+        option.value = item[valueField] || item[displayField]; // Use valueField or displayField as fallback
         option.textContent = item[displayField] || `[No ${displayField}]`;
         select.appendChild(option);
     });
@@ -153,6 +206,22 @@ function populateDropdown(selectId, data, displayField, valueField = 'id') {
     if (currentValue && [...select.options].some(opt => opt.value === currentValue)) {
         select.value = currentValue;
     }
+}
+
+// Populate category datalist for autocomplete
+function populateCategoryDatalist(categories) {
+    const datalist = document.getElementById('categoryList');
+    if (!datalist) return;
+    
+    // Clear existing options
+    datalist.innerHTML = '';
+    
+    // Add options from categories
+    categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category.name || category.category || '';
+        datalist.appendChild(option);
+    });
 }
 
 // Initialize rich text editor for description
@@ -179,7 +248,26 @@ function setupEventListeners() {
     if (!form) return;
     
     // Form submission with validation
-    form.addEventListener('submit', handleFormSubmit);
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        handleFormSubmit(e);
+    });
+    
+    // Price calculation inputs
+    const priceInputs = ['totalBulkCost', 'quantityPurchased', 'profitMargin'];
+    priceInputs.forEach(inputId => {
+        const input = document.getElementById(inputId);
+        if (input) {
+            input.addEventListener('input', calculatePrices);
+            input.addEventListener('change', calculatePrices);
+        }
+    });
+    
+    // Reset form button
+    const resetBtn = document.getElementById('resetFormBtn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetForm);
+    }
     
     // Real-time validation
     const validateFields = ['name', 'sku', 'barcode', 'quantityInStock', 'costPrice', 'sellingPrice'];
@@ -191,9 +279,9 @@ function setupEventListeners() {
         }
     });
     
-    // Price calculation
-    const priceInputs = ['costPrice', 'sellingPrice', 'wholesalePrice'];
-    priceInputs.forEach(id => {
+    // Price calculation for profit margin
+    const profitInputs = ['costPrice', 'sellingPrice', 'wholesalePrice'];
+    profitInputs.forEach(id => {
         const input = document.getElementById(id);
         if (input) {
             input.addEventListener('input', calculateProfit);
@@ -292,42 +380,82 @@ async function loadProductForEditing(productId) {
             throw new Error('Product not found');
         }
         
-        // Basic info
-        document.getElementById('productId').value = product.id;
-        setFormValue('name', product.name);
+        // Basic info - try both field ID variations
+        const productIdEl = document.getElementById('productId');
+        if (productIdEl) productIdEl.value = product.id;
+        
+        // Try name field, fallback to productName
+        if (!setFormValue('name', product.name)) {
+            setFormValue('productName', product.name);
+        }
         setFormValue('sku', product.sku);
-        setFormValue('barcode', product.barcode);
-        setFormValue('category', product.categoryId);
+        
+        // Try barcode field, fallback to productBarcode
+        if (!setFormValue('barcode', product.barcode)) {
+            setFormValue('productBarcode', product.barcode);
+        }
+        
+        // Category - use category name if available, otherwise categoryId
+        const categoryValue = product.category || product.category_name || product.categoryId;
+        if (!setFormValue('category', categoryValue)) {
+            setFormValue('productCategory', categoryValue);
+        }
+        
         setFormValue('brand', product.brand);
         setFormValue('supplierId', product.supplierId);
         
-        // Description
+        // Description - try both field IDs
         if (window.descriptionEditor) {
             window.descriptionEditor.value(product.description || '');
         } else {
-            setFormValue('description', product.description);
+            if (!setFormValue('description', product.description)) {
+                setFormValue('productDescription', product.description);
+            }
         }
         
-        // Pricing
-        setFormValue('costPrice', product.costPrice);
-        setFormValue('sellingPrice', product.sellingPrice);
-        setFormValue('wholesalePrice', product.wholesalePrice);
-        setFormValue('taxRate', product.taxRate);
-        setFormValue('taxInclusive', product.taxInclusive);
+        // Pricing - handle both snake_case and camelCase
+        const costPrice = product.cost_price || product.costPrice || 0;
+        const sellingPrice = product.selling_price || product.sellingPrice || 0;
+        const totalBulkCost = product.total_bulk_cost || product.totalBulkCost || 0;
+        const quantityPurchased = product.quantity_purchased || product.quantityPurchased || 0;
         
-        // Inventory
-        setFormValue('quantityInStock', product.quantityInStock);
-        setFormValue('reorderLevel', product.reorderLevel);
-        setFormValue('unit', product.unit);
-        setFormValue('weight', product.weight);
-        setFormValue('dimensions', product.dimensions);
+        setFormValue('totalBulkCost', totalBulkCost);
+        setFormValue('quantityPurchased', quantityPurchased);
+        setFormValue('profitMargin', product.profit_margin || product.profitMargin || 0);
+        
+        // Calculate and set unit cost price
+        if (totalBulkCost > 0 && quantityPurchased > 0) {
+            const unitCost = totalBulkCost / quantityPurchased;
+            setFormValue('unitCostPrice', unitCost.toFixed(2));
+        } else if (costPrice > 0) {
+            setFormValue('unitCostPrice', costPrice.toFixed(2));
+        }
+        
+        setFormValue('sellingPrice', sellingPrice);
+        setFormValue('wholesalePrice', product.wholesale_price || product.wholesalePrice || 0);
+        setFormValue('taxRate', product.tax_rate || product.taxRate || 0);
+        setFormValue('taxInclusive', product.tax_inclusive || product.taxInclusive || false);
+        
+        // Inventory - handle both snake_case and camelCase
+        setFormValue('quantityInStock', product.quantity_in_stock || product.quantityInStock || 0);
+        setFormValue('quantityOnShelf', product.quantity_on_shelf || product.quantityOnShelf || 0);
+        setFormValue('reorderLevel', product.reorder_level || product.reorderLevel || 5);
+        setFormValue('unit', product.unit_of_measure || product.unit || 'pcs');
+        setFormValue('weight', product.weight || 0);
+        setFormValue('dimensions', product.dimensions || '');
         
         // Status
-        setFormValue('isActive', product.isActive);
-        setFormValue('trackInventory', product.trackInventory);
+        setFormValue('isActive', product.is_active !== undefined ? product.is_active : (product.isActive !== undefined ? product.isActive : 1));
+        setFormValue('trackInventory', product.track_inventory || product.trackInventory || false);
         
-        // Dates
-        setFormValue('expiryDate', product.expiryDate);
+        // Dates - handle both snake_case and camelCase
+        setFormValue('manufacturedDate', product.manufactured_date || product.manufacturedDate || '');
+        setFormValue('expiryDate', product.expiry_date || product.expiryDate || '');
+        
+        // Trigger price calculation to update calculated fields
+        if (typeof calculatePrices === 'function') {
+            setTimeout(() => calculatePrices(), 100);
+        }
         
         // Images
         if (product.images && product.images.length > 0) {
@@ -366,7 +494,7 @@ async function loadProductForEditing(productId) {
 // Helper function to set form values
 function setFormValue(id, value) {
     const element = document.getElementById(id);
-    if (!element) return;
+    if (!element) return false; // Return false if element not found
     
     if (element.type === 'checkbox') {
         element.checked = !!value;
@@ -376,6 +504,7 @@ function setFormValue(id, value) {
     } else {
         element.value = value !== null && value !== undefined ? value : '';
     }
+    return true; // Return true if element was found and value was set
 }
 
 // Calculate profit based on cost and selling price
@@ -553,20 +682,38 @@ async function handleFormSubmit(event) {
                     }
                 }, 500);
             } else {
-                // For new products, redirect to the edit page with the new ID
+                // For new products, show success and navigate back to products page
                 showToast('Product created successfully!', 'success', 3000);
                 
-                // Update the URL without reloading the page
-                const newUrl = new URL(window.location);
-                newUrl.searchParams.set('id', savedProductId);
-                window.history.pushState({}, '', newUrl);
+                // Refresh products list if available
+                if (typeof window.loadProducts === 'function') {
+                    try {
+                        await window.loadProducts();
+                    } catch (e) {
+                        console.warn('Could not refresh products list:', e);
+                    }
+                }
                 
-                // Update the form with the new product ID
-                const idInput = document.getElementById('productId');
-                if (idInput) idInput.value = savedProductId;
+                // Refresh dashboard if available
+                if (typeof window.refreshDashboard === 'function') {
+                    try {
+                        await window.refreshDashboard();
+                    } catch (e) {
+                        console.warn('Could not refresh dashboard:', e);
+                    }
+                }
                 
-                // Reload the product data
-                await loadProductForEditing(savedProductId);
+                // Navigate back to products page after a short delay
+                setTimeout(() => {
+                    if (window.navigateTo) {
+                        window.navigateTo('products');
+                    } else if (window.app && window.app.navigateTo) {
+                        window.app.navigateTo('products');
+                    } else {
+                        // Fallback: use hash navigation
+                        window.location.hash = 'products';
+                    }
+                }, 1000);
             }
         } catch (loadError) {
             console.error('Error after saving:', loadError);
@@ -636,21 +783,23 @@ function getFormData() {
         return val === '' ? defaultValue : parseFloat(val) || defaultValue;
     };
     
-    // Basic product info
+    // Basic product info - check both possible field IDs
     data.name = getValue('name') || getValue('productName');
-    data.description = window.descriptionEditor ? window.descriptionEditor.value() : getValue('description');
-    data.barcode = getValue('barcode');
+    data.description = window.descriptionEditor ? window.descriptionEditor.value() : (getValue('description') || getValue('productDescription'));
+    data.barcode = getValue('barcode') || getValue('productBarcode');
     data.sku = getValue('sku');
     
-    // Category and supplier
-    data.category = getValue('category');
+    // Category and supplier - check both possible field IDs
+    data.category = getValue('category') || getValue('productCategory');
     data.categoryId = getValue('categoryId');
     data.supplierId = getValue('supplierId');
     data.supplierName = getValue('supplierName');
     data.supplierContact = getValue('supplierContact');
     
     // Pricing and quantities
-    data.costPrice = getNumber('costPrice');
+    // Get cost price from unitCostPrice if available (calculated field), otherwise from costPrice
+    const unitCostPrice = getNumber('unitCostPrice');
+    data.costPrice = unitCostPrice > 0 ? unitCostPrice : getNumber('costPrice');
     data.sellingPrice = getNumber('sellingPrice');
     data.profitMargin = getNumber('profitMargin');
     data.quantityInStock = getNumber('quantityInStock', 0);
@@ -675,8 +824,13 @@ function getFormData() {
     // Notes and additional info
     data.notes = getValue('notes');
     
-    // Calculate total bulk cost
-    data.totalBulkCost = data.costPrice * data.quantityPurchased;
+    // Calculate total bulk cost if we have costPrice and quantityPurchased
+    // Otherwise, use the totalBulkCost from the form
+    if (data.costPrice > 0 && data.quantityPurchased > 0) {
+        data.totalBulkCost = data.costPrice * data.quantityPurchased;
+    } else {
+        data.totalBulkCost = getNumber('totalBulkCost');
+    }
     
     // Ensure quantity_on_shelf is not more than quantity_in_stock
     if (data.quantityOnShelf > data.quantityInStock) {
@@ -751,14 +905,50 @@ function getFormData() {
     });
     
     // Ensure calculated fields
-    if (mappedData.cost_price && mappedData.quantity_purchased) {
-        mappedData.total_bulk_cost = parseFloat(mappedData.cost_price) * parseInt(mappedData.quantity_purchased);
+    // Calculate cost_price from total_bulk_cost and quantity_purchased if cost_price is not set
+    if ((!mappedData.cost_price || mappedData.cost_price === 0) && mappedData.total_bulk_cost && mappedData.quantity_purchased) {
+        const calculatedCost = parseFloat(mappedData.total_bulk_cost) / parseInt(mappedData.quantity_purchased);
+        if (!isNaN(calculatedCost) && calculatedCost > 0) {
+            mappedData.cost_price = calculatedCost;
+        }
     }
     
-    // Ensure required fields have values
+    // Calculate total_bulk_cost from cost_price and quantity_purchased if total_bulk_cost is not set
+    if ((!mappedData.total_bulk_cost || mappedData.total_bulk_cost === 0) && mappedData.cost_price && mappedData.quantity_purchased) {
+        const calculatedTotal = parseFloat(mappedData.cost_price) * parseInt(mappedData.quantity_purchased);
+        if (!isNaN(calculatedTotal) && calculatedTotal > 0) {
+            mappedData.total_bulk_cost = calculatedTotal;
+        }
+    }
+    
+    // IMPORTANT: If we have totalBulkCost and quantityPurchased, ALWAYS calculate cost_price
+    // This ensures inventory value can be calculated
+    if (mappedData.total_bulk_cost > 0 && mappedData.quantity_purchased > 0) {
+        const unitCost = parseFloat(mappedData.total_bulk_cost) / parseInt(mappedData.quantity_purchased);
+        if (!isNaN(unitCost) && unitCost > 0) {
+            mappedData.cost_price = unitCost;
+        }
+    }
+    
+    // If cost_price is still 0 but we have selling_price, use a default calculation
+    // (This is a fallback - ideally cost_price should always be set)
+    if ((!mappedData.cost_price || mappedData.cost_price === 0) && mappedData.selling_price > 0) {
+        // Assume 30% profit margin if cost is not set
+        mappedData.cost_price = parseFloat(mappedData.selling_price) / 1.3;
+    }
+    
+    // Ensure required fields have values - check both field ID variations
     if (!mappedData.name) {
         mappedData.name = document.getElementById('name')?.value || 
                          document.getElementById('productName')?.value || '';
+    }
+    
+    // Ensure category is set - use category name from input field
+    if (!mappedData.category) {
+        const categoryInput = document.getElementById('category') || document.getElementById('productCategory');
+        if (categoryInput) {
+            mappedData.category = categoryInput.value || '';
+        }
     }
     
     // Ensure required numeric fields have default values
@@ -802,15 +992,27 @@ function getFormData() {
 // Validate the entire form
 function validateForm() {
     let isValid = true;
-    const requiredFields = ['name', 'categoryId', 'sellingPrice'];
     
-    requiredFields.forEach(fieldId => {
-        const element = document.getElementById(fieldId);
-        if (element && !element.value.trim()) {
-            markFieldAsInvalid(element, 'This field is required');
-            isValid = false;
-        }
-    });
+    // Validate name - check both field IDs
+    const nameField = document.getElementById('name') || document.getElementById('productName');
+    if (!nameField || !nameField.value.trim()) {
+        if (nameField) markFieldAsInvalid(nameField, 'Product name is required');
+        isValid = false;
+    }
+    
+    // Validate category - check both field IDs
+    const categoryField = document.getElementById('category') || document.getElementById('productCategory');
+    if (!categoryField || !categoryField.value.trim()) {
+        if (categoryField) markFieldAsInvalid(categoryField, 'Category is required');
+        isValid = false;
+    }
+    
+    // Validate selling price
+    const sellingPriceField = document.getElementById('sellingPrice');
+    if (!sellingPriceField || !sellingPriceField.value || parseFloat(sellingPriceField.value) <= 0) {
+        if (sellingPriceField) markFieldAsInvalid(sellingPriceField, 'Selling price is required and must be greater than 0');
+        isValid = false;
+    }
     
     // Validate SKU uniqueness if not empty
     const skuInput = document.getElementById('sku');

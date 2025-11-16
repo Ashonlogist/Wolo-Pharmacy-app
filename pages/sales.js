@@ -5,27 +5,35 @@ import { showToast } from '../core/utils.js';
 let currentSaleItems = [];
 let currentCustomer = null;
 
-// Initialize the sales page
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        await initializeSalesPage();
-        setupEventListeners();
-    } catch (error) {
-        console.error('Error initializing sales page:', error);
-        showToast('Failed to initialize sales page', 'danger');
-    }
-});
+// Prevent duplicate initialization
+let salesPageInitialized = false;
 
 // Initialize the sales page
 async function initializeSalesPage() {
+    if (salesPageInitialized) {
+        console.warn('Sales page already initialized, skipping...');
+        return;
+    }
+    
     try {
+        salesPageInitialized = true;
         await populateProductDropdown();
         await loadTodaysSales();
         resetSaleForm();
+        setupEventListeners();
+        console.log('Sales page initialized successfully');
     } catch (error) {
         console.error('Error initializing sales page:', error);
         showToast('Failed to initialize sales page', 'danger');
+        salesPageInitialized = false;
     }
+}
+
+// Initialize on DOM ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeSalesPage);
+} else {
+    initializeSalesPage();
 }
 
 // Set up event listeners for the sales page
@@ -45,7 +53,10 @@ function setupEventListeners() {
     // Sale form submission
     const saleForm = document.getElementById('saleForm');
     if (saleForm) {
-        saleForm.addEventListener('submit', handleSaleSubmit);
+        saleForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            handleSaleSubmit(e);
+        });
     }
     
     // Date range filter
@@ -57,10 +68,22 @@ function setupEventListeners() {
         }
     });
     
+    // Load sales by date range button
+    const loadSalesBtn = document.getElementById('loadSalesByDateRangeBtn');
+    if (loadSalesBtn) {
+        loadSalesBtn.addEventListener('click', loadSalesByDateRange);
+    }
+    
     // Print receipt button
     const printBtn = document.getElementById('printReceiptBtn');
     if (printBtn) {
         printBtn.addEventListener('click', printReceipt);
+    }
+    
+    // Complete sale button
+    const completeBtn = document.getElementById('completeSaleBtn');
+    if (completeBtn) {
+        completeBtn.addEventListener('click', completeSale);
     }
 }
 
@@ -71,19 +94,38 @@ async function populateProductDropdown() {
     
     try {
         const productList = await products.getAll();
+        
+        // Handle different response formats
+        const productsArray = Array.isArray(productList) ? productList : (productList?.data || []);
+        
         productSelect.innerHTML = '<option value="">Select a product</option>';
         
-        productList.forEach(product => {
-            if (product.quantity_in_stock > 0) {
+        // Filter out inactive products and duplicates
+        const seenIds = new Set();
+        const activeProducts = productsArray.filter(product => {
+            if (!product.id || seenIds.has(product.id)) return false;
+            if (product.is_active === 0 || product.is_active === false) return false;
+            seenIds.add(product.id);
+            return true;
+        });
+        
+        activeProducts.forEach(product => {
+            // Handle both snake_case and camelCase
+            const stock = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+            const sellingPrice = parseFloat(product.selling_price || product.sellingPrice || 0);
+            
+            if (stock > 0) {
                 const option = document.createElement('option');
                 option.value = product.id;
-                option.textContent = `${product.name} (${product.quantity_in_stock} in stock)`;
-                option.dataset.price = product.selling_price;
+                option.textContent = `${product.name || 'Unknown'} (${stock} in stock)`;
+                option.dataset.price = sellingPrice;
                 productSelect.appendChild(option);
             }
         });
         
-        showToast('Products loaded successfully', 'success');
+        if (activeProducts.length > 0) {
+            console.log(`Loaded ${activeProducts.length} products for sale`);
+        }
     } catch (error) {
         console.error('Error loading products for sale:', error);
         showToast('Failed to load products', 'danger');
@@ -134,27 +176,47 @@ async function handleSaleSubmit(event) {
     
     try {
         // Get product details
-        const product = await products.getById(productId);
+        const productResponse = await products.getById(productId);
         
-        if (!product) {
+        // Handle different response formats
+        const product = productResponse?.data || productResponse;
+        
+        if (!product || !product.id) {
             showToast('Product not found', 'danger');
             return;
         }
         
-        if (product.quantity_in_stock < quantity) {
-            showToast(`Not enough stock. Only ${product.quantity_in_stock} available`, 'warning');
+        // Ensure we have the product ID
+        if (!product.id) {
+            console.error('Product missing ID:', product);
+            showToast('Product data is invalid', 'danger');
+            return;
+        }
+        
+        const stockQuantity = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+        if (stockQuantity < quantity) {
+            showToast(`Not enough stock. Only ${stockQuantity} available`, 'warning');
             return;
         }
         
         // Add to current sale items
-        currentSaleItems.push({
+        const saleItem = {
             productId: product.id,
-            name: product.name,
+            name: product.name || 'Unknown Product',
             quantity,
             unitPrice,
             total,
             product // Store full product details for receipt
-        });
+        };
+        
+        // Ensure productId is set correctly
+        if (!saleItem.productId) {
+            console.error('Sale item missing productId:', saleItem);
+            throw new Error('Product ID is missing');
+        }
+        
+        console.log('Adding sale item:', saleItem);
+        currentSaleItems.push(saleItem);
         
         updateSaleItemsList();
         resetSaleForm();
@@ -173,9 +235,60 @@ async function handleSaleSubmit(event) {
 // Update the sale items list in the UI
 function updateSaleItemsList() {
     const itemsList = document.getElementById('saleItemsList');
-    if (!itemsList) return;
+    if (!itemsList) {
+        // Try to create the items list if it doesn't exist
+        const saleFormCard = document.querySelector('#sales-page .card');
+        if (saleFormCard) {
+            const itemsCard = document.createElement('div');
+            itemsCard.className = 'card mb-4';
+            itemsCard.innerHTML = `
+                <div class="card-body">
+                    <h5 class="card-title">Current Sale Items</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Product</th>
+                                    <th class="text-end">Qty</th>
+                                    <th class="text-end">Unit Price</th>
+                                    <th class="text-end">Total</th>
+                                    <th class="text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="saleItemsList"></tbody>
+                            <tfoot>
+                                <tr class="table-active">
+                                    <th colspan="3" class="text-end">Grand Total:</th>
+                                    <th class="text-end" id="saleGrandTotal">0.00</th>
+                                    <th></th>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <div class="mt-3">
+                        <label for="salePaymentMethod" class="form-label">Payment Method</label>
+                        <select class="form-select mb-3" id="salePaymentMethod" required>
+                            <option value="cash">Cash</option>
+                            <option value="card">Card</option>
+                            <option value="mobile_money">Mobile Money</option>
+                            <option value="other">Other</option>
+                        </select>
+                        <label for="saleCustomerName" class="form-label">Customer Name (Optional)</label>
+                        <input type="text" class="form-control mb-3" id="saleCustomerName" placeholder="Enter customer name">
+                        <button type="button" class="btn btn-success w-100" id="completeSaleBtn">
+                            <i class="bi bi-check-circle me-2"></i>Complete Sale
+                        </button>
+                    </div>
+                </div>
+            `;
+            saleFormCard.after(itemsCard);
+        }
+    }
     
-    itemsList.innerHTML = '';
+    const itemsListEl = document.getElementById('saleItemsList');
+    if (!itemsListEl) return;
+    
+    itemsListEl.innerHTML = '';
     let grandTotal = 0;
     
     currentSaleItems.forEach((item, index) => {
@@ -183,21 +296,46 @@ function updateSaleItemsList() {
         
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${item.productName}</td>
+            <td>${item.name}</td>
             <td class="text-end">${item.quantity}</td>
-            <td class="text-end">$${item.unitPrice.toFixed(2)}</td>
-            <td class="text-end">$${item.total.toFixed(2)}</td>
+            <td class="text-end">GH₵${item.unitPrice.toFixed(2)}</td>
+            <td class="text-end">GH₵${item.total.toFixed(2)}</td>
             <td class="text-center">
-                <button class="btn btn-sm btn-danger" onclick="removeSaleItem(${index})">
+                <button class="btn btn-sm btn-danger remove-sale-item-btn" data-index="${index}">
                     <i class="bi bi-trash"></i>
                 </button>
             </td>
         `;
-        itemsList.appendChild(row);
+        itemsListEl.appendChild(row);
     });
     
     // Update grand total
-    document.getElementById('saleGrandTotal').textContent = grandTotal.toFixed(2);
+    const grandTotalEl = document.getElementById('saleGrandTotal');
+    if (grandTotalEl) {
+        grandTotalEl.textContent = `GH₵${grandTotal.toFixed(2)}`;
+    }
+    
+    // Show/hide complete sale button based on items
+    const completeBtn = document.getElementById('completeSaleBtn');
+    if (completeBtn) {
+        completeBtn.style.display = currentSaleItems.length > 0 ? 'block' : 'none';
+        // Re-attach event listener if button was just created
+        if (!completeBtn.hasAttribute('data-listener-attached')) {
+            completeBtn.setAttribute('data-listener-attached', 'true');
+            completeBtn.addEventListener('click', completeSale);
+        }
+    }
+    
+    // Add event listeners for remove buttons (remove old listeners first to prevent duplicates)
+    document.querySelectorAll('.remove-sale-item-btn').forEach(btn => {
+        // Clone and replace to remove old event listeners
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+        newBtn.addEventListener('click', (e) => {
+            const index = parseInt(e.target.closest('.remove-sale-item-btn').dataset.index);
+            removeSaleItem(index);
+        });
+    });
 }
 
 // Remove item from current sale
@@ -252,35 +390,145 @@ async function loadSalesByDateRange() {
     }
 }
 
+// Complete the sale
+async function completeSale() {
+    if (currentSaleItems.length === 0) {
+        showToast('Please add items to the sale', 'warning');
+        return;
+    }
+    
+    const paymentMethod = document.getElementById('salePaymentMethod')?.value || 'cash';
+    const customerName = document.getElementById('saleCustomerName')?.value || '';
+    const notes = document.getElementById('saleNotes')?.value || '';
+    
+    try {
+        const customerInfo = customerName ? { name: customerName } : null;
+        
+        // Map sale items and validate productIds
+        const saleItems = currentSaleItems.map(item => {
+            if (!item.productId) {
+                console.error('Sale item missing productId:', item);
+                throw new Error(`Product ID is missing for item: ${item.name}`);
+            }
+            return {
+                productId: item.productId,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice
+            };
+        });
+        
+        console.log('Completing sale with items:', saleItems);
+        
+        const result = await sales.create({
+            items: saleItems,
+            paymentMethod,
+            customerInfo,
+            notes
+        });
+        
+        if (result && result.success) {
+            showToast('Sale recorded successfully!', 'success');
+            
+            // Clear current sale
+            currentSaleItems = [];
+            updateSaleItemsList();
+            resetSaleForm();
+            
+            // Reload today's sales
+            await loadTodaysSales();
+            
+            // Refresh product dropdown (stock may have changed)
+            await populateProductDropdown();
+            
+            // Refresh products page if it's loaded
+            if (typeof window.loadProducts === 'function') {
+                try {
+                    await window.loadProducts();
+                } catch (e) {
+                    console.warn('Could not refresh products:', e);
+                }
+            }
+            
+            // Refresh dashboard if it's loaded
+            if (typeof window.refreshDashboard === 'function') {
+                try {
+                    await window.refreshDashboard();
+                } catch (e) {
+                    console.warn('Could not refresh dashboard:', e);
+                }
+            }
+        } else {
+            throw new Error(result?.error || 'Failed to record sale');
+        }
+    } catch (error) {
+        console.error('Error completing sale:', error);
+        showToast(error.message || 'Failed to record sale', 'danger');
+    }
+}
+
 // Render sales table
 function renderSalesTable(sales) {
-    const tbody = document.querySelector('#salesTable tbody');
+    const tbody = document.getElementById('salesTableBody');
     if (!tbody) return;
     
     tbody.innerHTML = '';
     let totalSales = 0;
     
-    sales.forEach(sale => {
-        totalSales += sale.total || 0;
+    // Ensure sales is an array
+    const salesArray = Array.isArray(sales) ? sales : (sales?.data || []);
+    
+    if (salesArray.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No sales found</td></tr>';
+        const totalEl = document.getElementById('salesTotal');
+        if (totalEl) totalEl.textContent = 'GH₵ 0.00';
+        return;
+    }
+    
+    salesArray.forEach(sale => {
+        // Handle different sale data structures
+        const saleDate = sale.sale_date || sale.saleDate || sale.date || sale.created_at || new Date().toISOString();
+        const totalAmount = parseFloat(sale.total_amount || sale.total || 0);
+        totalSales += totalAmount;
+        
+        // Get sale items if available - check for sale_items array
+        let itemsCount = 0;
+        let productNames = [];
+        let unitPrice = 0;
+        
+        if (sale.items && Array.isArray(sale.items)) {
+            itemsCount = sale.items.length;
+            productNames = sale.items.map(item => item.product_name || item.name || 'Unknown').join(', ');
+            if (sale.items.length > 0) {
+                unitPrice = parseFloat(sale.items[0].unit_price || sale.items[0].unitPrice || 0);
+            }
+        } else if (sale.sale_items && Array.isArray(sale.sale_items)) {
+            itemsCount = sale.sale_items.length;
+            productNames = sale.sale_items.map(item => item.product_name || item.name || 'Unknown').join(', ');
+            if (sale.sale_items.length > 0) {
+                unitPrice = parseFloat(sale.sale_items[0].unit_price || sale.sale_items[0].unitPrice || 0);
+            }
+        } else if (sale.product_name) {
+            itemsCount = 1;
+            productNames = sale.product_name;
+            unitPrice = parseFloat(sale.unit_price || sale.unitPrice || 0);
+        }
+        
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${sale.invoiceNumber || ''}</td>
-            <td>${sale.customerName || 'Walk-in Customer'}</td>
-            <td>${new Date(sale.date).toLocaleDateString()}</td>
-            <td>${sale.items?.length || 0}</td>
-            <td class="text-end">$${(sale.total || 0).toFixed(2)}</td>
-            <td class="text-center">
-                <button class="btn btn-sm btn-info" onclick="viewSaleDetails('${sale.id}')">
-                    <i class="bi bi-eye"></i> View
-                </button>
-            </td>
+            <td>${new Date(saleDate).toLocaleString()}</td>
+            <td>${productNames || 'N/A'}</td>
+            <td class="text-end">${itemsCount}</td>
+            <td class="text-end">GH₵${unitPrice.toFixed(2)}</td>
+            <td class="text-end">GH₵${totalAmount.toFixed(2)}</td>
         `;
         tbody.appendChild(row);
     });
     
-    // Update summary
-    document.getElementById('totalSalesCount').textContent = sales.length;
-    document.getElementById('totalSalesAmount').textContent = totalSales.toFixed(2);
+    // Update total
+    const totalEl = document.getElementById('salesTotal');
+    if (totalEl) {
+        totalEl.textContent = `GH₵ ${totalSales.toFixed(2)}`;
+    }
 }
 
 // View sale details
@@ -338,10 +586,10 @@ function printReceipt() {
     currentSaleItems.forEach(item => {
         receiptHtml += `
             <tr>
-                <td>${item.productName}</td>
+                <td>${item.name}</td>
                 <td>${item.quantity}</td>
-                <td>$${item.unitPrice.toFixed(2)}</td>
-                <td>$${item.total.toFixed(2)}</td>
+                <td>GH₵${item.unitPrice.toFixed(2)}</td>
+                <td>GH₵${item.total.toFixed(2)}</td>
             </tr>
         `;
     });
@@ -353,7 +601,7 @@ function printReceipt() {
     receiptHtml += `
                 </table>
                 <div class="total">
-                    Total: $${grandTotal.toFixed(2)}
+                    Total: GH₵${grandTotal.toFixed(2)}
                 </div>
                 <div class="footer">
                     <p>Thank you for shopping with us!</p>
@@ -382,6 +630,7 @@ function printReceipt() {
 window.updateSaleForm = updateSaleForm;
 window.calculateSaleTotal = calculateSaleTotal;
 window.removeSaleItem = removeSaleItem;
+window.completeSale = completeSale;
 window.loadTodaysSales = loadTodaysSales;
 window.loadSalesByDateRange = loadSalesByDateRange;
 window.viewSaleDetails = viewSaleDetails;

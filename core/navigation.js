@@ -134,6 +134,34 @@ async function navigateTo(pageName, data = {}) {
             if (state && state.set) {
                 state.set('currentPage', actualPageName);
             }
+            
+            // Initialize page-specific functionality if needed
+            // This ensures pages refresh when navigated to
+            try {
+                switch(actualPageName) {
+                    case 'dashboard':
+                        if (typeof window.refreshDashboard === 'function') {
+                            window.refreshDashboard();
+                        }
+                        break;
+                    case 'products':
+                        if (typeof window.loadProducts === 'function') {
+                            window.loadProducts();
+                        }
+                        break;
+                    case 'sales':
+                        // Sales page will auto-initialize on load
+                        break;
+                    case 'reports':
+                        // Reports page will auto-initialize on load
+                        break;
+                    case 'settings':
+                        // Settings page will auto-initialize on load
+                        break;
+                }
+            } catch (error) {
+                console.warn(`Error initializing ${actualPageName} page:`, error);
+            }
         } else {
             console.error(`Page not found. Tried: ${pageVariations.join(', ')}`);
         }

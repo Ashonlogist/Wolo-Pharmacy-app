@@ -122,7 +122,7 @@ function initializeDashboard() {
 // Initialize event listeners
 function initializeEventListeners() {
     // Refresh button
-    const refreshBtn = document.getElementById('refreshDashboard');
+    const refreshBtn = document.getElementById('refreshDashboardBtn') || document.getElementById('refreshDashboard');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => refreshDashboard().catch(handleDashboardError));
     }
@@ -137,6 +137,44 @@ function initializeEventListeners() {
     const chartTypeSelect = document.getElementById('chartType');
     if (chartTypeSelect) {
         chartTypeSelect.addEventListener('change', updateChartType);
+    }
+    
+    // Sales chart refresh buttons
+    const refreshSalesChartBtn = document.getElementById('refreshSalesChartBtn');
+    if (refreshSalesChartBtn) {
+        refreshSalesChartBtn.addEventListener('click', () => {
+            if (typeof refreshSalesChart === 'function') {
+                refreshSalesChart();
+            }
+        });
+    }
+    
+    const refreshSalesChartBtn2 = document.getElementById('refreshSalesChartBtn2');
+    if (refreshSalesChartBtn2) {
+        refreshSalesChartBtn2.addEventListener('click', () => {
+            if (typeof refreshSalesChart === 'function') {
+                refreshSalesChart();
+            }
+        });
+    }
+    
+    // Sales chart filters
+    const salesCategoryFilter = document.getElementById('categoryFilter');
+    if (salesCategoryFilter && salesCategoryFilter.closest('#dashboard-page')) {
+        salesCategoryFilter.addEventListener('change', () => {
+            if (typeof refreshSalesChart === 'function') {
+                refreshSalesChart();
+            }
+        });
+    }
+    
+    const timeGrouping = document.getElementById('timeGrouping');
+    if (timeGrouping && timeGrouping.closest('#dashboard-page')) {
+        timeGrouping.addEventListener('change', () => {
+            if (typeof refreshSalesChart === 'function') {
+                refreshSalesChart();
+            }
+        });
     }
 }
 
@@ -268,11 +306,22 @@ async function fetchSummaryData() {
                           (productsResponse && Array.isArray(productsResponse.data) ?
                            productsResponse.data : []);
         
-        // Calculate inventory value
+        // Calculate inventory value - use cost_price or calculate from total_bulk_cost
         const inventoryValue = allProducts.reduce((total, product) => {
-            const quantity = parseFloat(product.quantity_in_stock) || 0;
-            const cost = parseFloat(product.purchase_price) || 0;
-            return total + (quantity * cost);
+            const quantity = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+            let cost = parseFloat(product.cost_price || product.costPrice || product.purchase_price || 0);
+            
+            // If cost_price is 0, try to calculate from total_bulk_cost and quantity_purchased
+            if (cost === 0 || isNaN(cost)) {
+                const totalBulkCost = parseFloat(product.total_bulk_cost || product.totalBulkCost || 0);
+                const quantityPurchased = parseFloat(product.quantity_purchased || product.quantityPurchased || 0);
+                if (totalBulkCost > 0 && quantityPurchased > 0) {
+                    cost = totalBulkCost / quantityPurchased;
+                }
+            }
+            
+            const value = quantity * cost;
+            return isNaN(value) || value < 0 ? total : total + value;
         }, 0);
         
         // Calculate today's total sales
@@ -497,16 +546,7 @@ window.viewSaleDetails = viewSaleDetails;
 window.updateChartType = updateChartType;
 
 // Initialize date range picker event listener
-document.addEventListener('DOMContentLoaded', () => {
-    try {
-        const applyDateBtn = document.getElementById('applyDateRange');
-        if (applyDateBtn) {
-            applyDateBtn.addEventListener('click', debounce(applyDateRange, 300));
-        }
-    } catch (error) {
-        console.error('Error initializing date range picker:', error);
-    }
-});
+// Date range picker initialization is handled in initializeEventListeners()
 
 // Check if cache is still valid
 function isCacheValid() {
@@ -596,10 +636,34 @@ function updateSalesSummary(apiResponse) {
 function updateProductSummary(apiResponse) {
     try {
         // Get the products array from the response
-        const products = Array.isArray(apiResponse) ? apiResponse : 
+        let products = Array.isArray(apiResponse) ? apiResponse : 
                        (apiResponse?.data || []);
         
-        console.log('Products data in updateProductSummary:', products);
+        // Filter out inactive products and duplicates
+        const seenIds = new Set();
+        products = products.filter(p => {
+            // Skip if no ID
+            if (!p.id) return false;
+            
+            // Skip if already seen (duplicate)
+            if (seenIds.has(p.id)) {
+                console.warn('Duplicate product found:', p.id, p.name);
+                return false;
+            }
+            
+            // Skip inactive products
+            if (p.is_active === 0 || p.is_active === false) {
+                return false;
+            }
+            
+            seenIds.add(p.id);
+            return true;
+        });
+        
+        console.log('Products data in updateProductSummary:', {
+            total: products.length,
+            products: products.map(p => ({ id: p.id, name: p.name, is_active: p.is_active }))
+        });
         
         // Calculate the values
         const totalProducts = products.length;
@@ -615,19 +679,62 @@ function updateProductSummary(apiResponse) {
         // Calculate total inventory value (quantityInStock * costPrice)
         const totalValue = products.reduce((sum, product) => {
             // Try both snake_case and camelCase field names for compatibility
-            const quantity = parseFloat(product.quantityInStock || product.quantity_in_stock || 0);
-            const cost = parseFloat(product.costPrice || product.cost_price || product.purchase_price || 0);
+            const quantity = parseFloat(product.quantity_in_stock || product.quantityInStock || 0);
+            
+            // Try multiple cost field names and calculation methods
+            let cost = parseFloat(product.cost_price || product.costPrice || product.purchase_price || 0);
+            
+            // If cost_price is 0 or not set, try to calculate from total_bulk_cost and quantity_purchased
+            if (cost === 0 || isNaN(cost)) {
+                const totalBulkCost = parseFloat(product.total_bulk_cost || product.totalBulkCost || 0);
+                const quantityPurchased = parseFloat(product.quantity_purchased || product.quantityPurchased || 0);
+                if (totalBulkCost > 0 && quantityPurchased > 0) {
+                    cost = totalBulkCost / quantityPurchased;
+                }
+            }
+            
             const value = quantity * cost;
-            if (isNaN(value)) {
-                console.warn('Invalid product value calculation:', { product, quantity, cost });
+            if (isNaN(value) || value < 0) {
+                console.warn('Invalid product value calculation:', { 
+                    productId: product.id, 
+                    productName: product.name,
+                    quantity, 
+                    cost,
+                    quantityField: product.quantity_in_stock || product.quantityInStock,
+                    costField: product.cost_price || product.costPrice || product.purchase_price,
+                    totalBulkCost: product.total_bulk_cost || product.totalBulkCost,
+                    quantityPurchased: product.quantity_purchased || product.quantityPurchased
+                });
                 return sum;
             }
             return sum + value;
         }, 0);
         
+        // Calculate expiring items (within 30 days)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const thirtyDaysFromNow = new Date(today);
+        thirtyDaysFromNow.setDate(today.getDate() + 30);
+        
+        const expiringItems = products.filter(p => {
+            const expiryDate = p.expiry_date || p.expiryDate;
+            if (!expiryDate) return false;
+            
+            try {
+                const expiry = new Date(expiryDate);
+                expiry.setHours(0, 0, 0, 0);
+                return expiry >= today && expiry <= thirtyDaysFromNow;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        const expiringCount = expiringItems.length;
+        
         console.log('Dashboard values:', {
             totalProducts,
             lowStockItems,
+            expiringCount,
             totalValue: formatCurrency(totalValue),
             sampleProduct: products[0] ? {
                 id: products[0].id,
@@ -641,18 +748,27 @@ function updateProductSummary(apiResponse) {
         // Update the UI elements
         const totalProductsEl = document.getElementById('totalProducts');
         const lowStockCountEl = document.getElementById('lowStockCount');
+        const expiringSoonCountEl = document.getElementById('expiringSoonCount');
         const totalValueEl = document.getElementById('totalValue');
         
         if (totalProductsEl) totalProductsEl.textContent = totalProducts.toLocaleString();
         if (lowStockCountEl) lowStockCountEl.textContent = lowStockItems.toLocaleString();
+        if (expiringSoonCountEl) expiringSoonCountEl.textContent = expiringCount.toLocaleString();
         if (totalValueEl) {
             totalValueEl.textContent = formatCurrency(totalValue);
             console.log('Updated total inventory value:', formatCurrency(totalValue));
         }
         
+        // Update low stock list
+        updateLowStockList(products);
+        
+        // Update expiring items list
+        updateExpiringList(expiringItems);
+        
         // Force a reflow to ensure UI updates
         if (totalProductsEl) void totalProductsEl.offsetHeight;
         if (lowStockCountEl) void lowStockCountEl.offsetHeight;
+        if (expiringSoonCountEl) void expiringSoonCountEl.offsetHeight;
         if (totalValueEl) void totalValueEl.offsetHeight;
         
     } catch (error) {
@@ -664,8 +780,88 @@ function updateProductSummary(apiResponse) {
         
         if (totalProductsEl) totalProductsEl.textContent = '0';
         if (lowStockCountEl) lowStockCountEl.textContent = '0';
+        const expiringSoonCountEl = document.getElementById('expiringSoonCount');
+        if (expiringSoonCountEl) expiringSoonCountEl.textContent = '0';
         if (totalValueEl) totalValueEl.textContent = formatCurrency(0);
     }
+}
+
+// Update low stock list
+function updateLowStockList(products) {
+    const lowStockListEl = document.getElementById('lowStockList');
+    if (!lowStockListEl) return;
+    
+    // Filter low stock items
+    const lowStockItems = products.filter(p => {
+        const quantity = parseFloat(p.quantity_in_stock || p.quantityInStock || 0);
+        const reorderLevel = parseFloat(p.reorder_level || p.low_stock_threshold || 5);
+        return quantity > 0 && quantity <= reorderLevel;
+    });
+    
+    if (lowStockItems.length === 0) {
+        lowStockListEl.innerHTML = '<div class="alert alert-info mb-0">No low stock items</div>';
+        return;
+    }
+    
+    // Sort by quantity (lowest first) and take top 10
+    const sortedItems = lowStockItems
+        .sort((a, b) => {
+            const qtyA = parseFloat(a.quantity_in_stock || a.quantityInStock || 0);
+            const qtyB = parseFloat(b.quantity_in_stock || b.quantityInStock || 0);
+            return qtyA - qtyB;
+        })
+        .slice(0, 10);
+    
+    lowStockListEl.innerHTML = sortedItems.map(item => {
+        const quantity = parseFloat(item.quantity_in_stock || item.quantityInStock || 0);
+        const reorderLevel = parseFloat(item.reorder_level || item.low_stock_threshold || 5);
+        const stockClass = quantity === 0 ? 'danger' : 'warning';
+        
+        return `
+            <div class="alert alert-${stockClass} alert-dismissible fade show mb-2" role="alert">
+                <strong>${item.name || 'Unknown Product'}</strong><br>
+                <small>Stock: ${quantity} / Reorder Level: ${reorderLevel}</small>
+            </div>
+        `;
+    }).join('');
+}
+
+// Update expiring items list
+function updateExpiringList(expiringItems) {
+    const expiringListEl = document.getElementById('expiringList');
+    if (!expiringListEl) return;
+    
+    if (expiringItems.length === 0) {
+        expiringListEl.innerHTML = '<div class="alert alert-info mb-0">No items expiring soon</div>';
+        return;
+    }
+    
+    // Sort by expiry date (soonest first) and take top 10
+    const sortedItems = expiringItems
+        .sort((a, b) => {
+            const dateA = new Date(a.expiry_date || a.expiryDate || 0);
+            const dateB = new Date(b.expiry_date || b.expiryDate || 0);
+            return dateA - dateB;
+        })
+        .slice(0, 10);
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    expiringListEl.innerHTML = sortedItems.map(item => {
+        const expiryDate = item.expiry_date || item.expiryDate;
+        const expiry = new Date(expiryDate);
+        expiry.setHours(0, 0, 0, 0);
+        const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+        const alertClass = daysUntilExpiry <= 7 ? 'danger' : 'warning';
+        
+        return `
+            <div class="alert alert-${alertClass} alert-dismissible fade show mb-2" role="alert">
+                <strong>${item.name || 'Unknown Product'}</strong><br>
+                <small>Expires: ${expiry.toLocaleDateString()} (${daysUntilExpiry} days)</small>
+            </div>
+        `;
+    }).join('');
 }
 
 /**
@@ -856,36 +1052,53 @@ function updateCharts(salesData = [], products = []) {
         return;
     }
     
+    // Process sales data for daily aggregation
+    const dailySales = {};
+    const validSalesData = salesData.filter(sale => sale && typeof sale === 'object');
+    
+    validSalesData.forEach(sale => {
+        try {
+            // Get sale date - try multiple field names
+            const saleDate = sale.sale_date || sale.saleDate || sale.created_at || sale.date || new Date().toISOString();
+            const dateKey = saleDate.split('T')[0]; // Get YYYY-MM-DD format
+            
+            if (!dailySales[dateKey]) {
+                dailySales[dateKey] = 0;
+            }
+            
+            // Add sale total - try multiple field names
+            const total = parseFloat(sale.total_amount || sale.total || sale.amount || 0);
+            dailySales[dateKey] += total;
+        } catch (e) {
+            console.error('Error processing sale:', sale, e);
+        }
+    });
+    
+    // Sort dates
+    const sortedDates = Object.keys(dailySales).sort();
+    const salesValues = sortedDates.map(date => dailySales[date]);
+    
+    // Format dates for display
+    const formattedDates = sortedDates.map(date => {
+        try {
+            const d = new Date(date);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        } catch (e) {
+            return date;
+        }
+    });
+    
     // Update sales chart if it exists
     if (window.salesChart) {
         try {
-            // Process sales data
-            const salesByDate = {};
-            const validSalesData = salesData.filter(sale => sale && typeof sale === 'object');
-            
-            validSalesData.forEach(sale => {
-                try {
-                    const date = sale.saleDate 
-                        ? new Date(sale.saleDate).toLocaleDateString() 
-                        : 'Unknown Date';
-                    const amount = parseFloat(sale.total) || 0;
-                    salesByDate[date] = (salesByDate[date] || 0) + amount;
-                } catch (e) {
-                    console.error('Error processing sale:', sale, e);
-                }
-            });
-            
-            const labels = Object.keys(salesByDate).sort();
-            const data = labels.map(date => salesByDate[date]);
-            
             if (window.salesChart.data && window.salesChart.data.datasets?.[0]) {
-                window.salesChart.data.labels = labels;
-                window.salesChart.data.datasets[0].data = data;
-                window.salesChart.update();
+                window.salesChart.data.labels = formattedDates;
+                window.salesChart.data.datasets[0].data = salesValues;
+                window.salesChart.update('none'); // Update without animation for performance
             }
         } catch (error) {
             console.error('Error updating sales chart:', error);
-            showToast('Error updating sales data', 'danger');
+            showToast('Error updating sales chart', 'danger');
         }
     }
     
@@ -924,16 +1137,5 @@ window.refreshDashboard = refreshDashboard;
 window.applyDateRange = applyDateRange;
 
 // Initialize the dashboard when the script loads
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeDashboard);
-} else {
-    // DOMContentLoaded has already fired
-    initializeDashboard();
-}
-
-// Initialize charts on window load to ensure all resources are loaded
-window.addEventListener('load', () => {
-    if (typeof initializeCharts === 'function') {
-        initializeCharts();
-    }
-});
+// Remove duplicate initialization - already handled by initDashboard() IIFE above
+// Dashboard will initialize when the module loads

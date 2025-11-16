@@ -53,7 +53,11 @@ export async function ipcCall(channel, data = {}) {
 // Exported API objects (all delegate to ipcCall)
 const products = {
     getAll: async () => await ipcCall('get-products'),
-    getById: async (id) => await ipcCall('get-product', id),
+    getById: async (id) => {
+        const response = await ipcCall('get-product', id);
+        // Handle response format - return data directly if wrapped
+        return response?.data || response;
+    },
     create: async (product) => {
         try {
             console.log('Creating product with data:', product);
@@ -84,13 +88,25 @@ const products = {
             };
         }
     },
-    update: async (id, updates) => await ipcCall('update-product', { id, updates }),
-    delete: async (id) => await ipcCall('delete-product', id),
+    update: async (id, updates) => {
+        const response = await ipcCall('update-product', { id, updates });
+        return response?.success ? response : { success: false, error: response?.error || 'Update failed' };
+    },
+    delete: async (id) => {
+        const response = await ipcCall('delete-product', id);
+        // Handle both response formats
+        if (response?.success !== undefined) {
+            return response;
+        }
+        // If response is just success/error, wrap it
+        return { success: !!response, error: response?.error };
+    },
     // search implemented client-side by filtering getAll results
     search: async (query) => {
         const all = await ipcCall('get-products');
         return all.filter(p => (p.name || '').toLowerCase().includes((query||'').toLowerCase()));
-    }
+    },
+    exportToExcel: async (params) => await ipcCall('export-sales-excel', params)
 };
 
 const sales = {
@@ -110,8 +126,71 @@ const sales = {
 
 const reports = {
     generateSalesReport: async (params) => await ipcCall('get-sales-by-date-range', params),
-    generateInventoryReport: async () => await ipcCall('get-products'),
-    getLowStockItems: async (threshold = 10) => await ipcCall('get-low-stock-items', { threshold })
+    getSalesReport: async (params) => {
+        const response = await ipcCall('get-sales-by-date-range', params);
+        return Array.isArray(response) ? response : (response?.data || []);
+    },
+    getInventoryReport: async ({ category } = {}) => {
+        const response = await ipcCall('get-products');
+        let products = Array.isArray(response) ? response : (response?.data || []);
+        
+        // Filter by category if provided
+        if (category) {
+            products = products.filter(p => {
+                const prodCategory = p.category || '';
+                return prodCategory.toLowerCase().replace(/\s+/g, '-') === category.toLowerCase();
+            });
+        }
+        
+        return products;
+    },
+    getLowStockReport: async ({ threshold = 10, category } = {}) => {
+        const response = await ipcCall('get-low-stock-items', { threshold });
+        let items = Array.isArray(response) ? response : (response?.data || []);
+        
+        // Filter by category if provided
+        if (category) {
+            items = items.filter(p => {
+                const prodCategory = p.category || '';
+                return prodCategory.toLowerCase().replace(/\s+/g, '-') === category.toLowerCase();
+            });
+        }
+        
+        return items;
+    },
+    getExpiringProducts: async ({ startDate, endDate, category } = {}) => {
+        const response = await ipcCall('get-products');
+        let products = Array.isArray(response) ? response : (response?.data || []);
+        
+        // Filter by category if provided
+        if (category) {
+            products = products.filter(p => {
+                const prodCategory = p.category || '';
+                return prodCategory.toLowerCase().replace(/\s+/g, '-') === category.toLowerCase();
+            });
+        }
+        
+        // Filter by expiry date range
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const end = endDate ? new Date(endDate) : new Date();
+        end.setHours(23, 59, 59, 999);
+        
+        return products.filter(p => {
+            const expiryDate = p.expiry_date || p.expiryDate;
+            if (!expiryDate) return false;
+            
+            try {
+                const expiry = new Date(expiryDate);
+                expiry.setHours(0, 0, 0, 0);
+                return expiry >= today && expiry <= end;
+            } catch (e) {
+                return false;
+            }
+        });
+    },
+    getLowStockItems: async (threshold = 10) => await ipcCall('get-low-stock-items', { threshold }),
+    exportSalesToExcel: async (params) => await ipcCall('export-sales-excel', params)
 };
 
 const settings = {
@@ -145,6 +224,10 @@ const settings = {
 
     backup: async () => await ipcCall('create-backup'),
     restore: async (backupPath) => await ipcCall('restore-backup', { backupPath }),
+    testEmail: async () => {
+        // Placeholder for test email functionality
+        return { success: false, error: 'Test email functionality not yet implemented' };
+    },
     
     // Developer mode helpers
     isDeveloperMode: async () => {

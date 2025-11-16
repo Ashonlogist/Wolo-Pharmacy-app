@@ -125,71 +125,62 @@ loadingOverlay.innerHTML = `
 `;
 
 // Initialize the page when the DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+// Prevent duplicate initialization
+let settingsPageInitialized = false;
+
+// Initialize settings page
+async function initializeSettingsPage() {
+    if (settingsPageInitialized) {
+        console.warn('Settings page already initialized, skipping...');
+        return;
+    }
+    
     try {
+        settingsPageInitialized = true;
+        
         // Show loading overlay
-        document.body.appendChild(loadingOverlay);
+        if (!document.body.contains(loadingOverlay)) {
+            document.body.appendChild(loadingOverlay);
+        }
 
         // Wrap all async initialization in Promise.allSettled
-        Promise.allSettled([
+        const results = await Promise.allSettled([
             wrapInitFunction(loadSettings, 'loadSettings', 'Failed to load settings'),
             wrapInitFunction(setupEventListeners, 'setupEventListeners', 'Failed to initialize some features'),
             wrapInitFunction(checkForUpdates, 'checkForUpdates', 'Failed to check for updates')
-        ]).then(results => {
-            // Process results
-            const failures = results.filter(result => result.status === 'rejected');
-            if (failures.length > 0) {
-                failures.forEach((failure, index) => {
-                    console.error(`Initialization step ${index} failed:`, failure.reason);
-                });
+        ]);
+        
+        // Process results
+        const failures = results.filter(result => result.status === 'rejected');
+        if (failures.length > 0) {
+            failures.forEach((failure, index) => {
+                console.error(`Initialization step ${index} failed:`, failure.reason);
+            });
 
-                if (failures.length === results.length) {
-                    showToast('Failed to initialize settings page. Please try refreshing.', 'danger');
-                } else {
-                    showToast('Some features failed to initialize. Some functionality may be limited.', 'warning');
-                }
+            if (failures.length === results.length) {
+                showToast('Failed to initialize settings page. Please try refreshing.', 'danger');
+            } else {
+                showToast('Some features failed to initialize. Some functionality may be limited.', 'warning');
             }
-        }).catch(error => {
-            console.error('Critical initialization error:', error);
-            showToast('Failed to initialize settings page. Please try refreshing.', 'danger');
-        }).finally(() => {
-            // Always remove loading overlay
-            loadingOverlay.remove();
-        });
+        }
     } catch (error) {
-        console.error('Error in DOMContentLoaded:', error);
-        loadingOverlay.remove();
+        console.error('Error in initializeSettingsPage:', error);
         showToast('Failed to initialize settings page', 'danger');
+        settingsPageInitialized = false;
+    } finally {
+        // Always remove loading overlay
+        if (document.body.contains(loadingOverlay)) {
+            loadingOverlay.remove();
+        }
     }
-});
+}
 
-document.addEventListener('DOMContentLoaded', () => {
-    // Wrap all async initialization in Promise.allSettled to handle all possible rejections
-    Promise.allSettled([
-        loadSettings().catch(error => {
-            console.error('Error loading settings:', error);
-            showToast('Failed to load settings', 'danger');
-            return Promise.reject(error);
-        }),
-        setupEventListeners().catch(error => {
-            console.error('Error setting up event listeners:', error);
-            showToast('Failed to initialize some features', 'warning');
-            return Promise.reject(error);
-        }),
-        checkForUpdates().catch(error => {
-            console.error('Error checking for updates:', error);
-            showToast('Failed to check for updates', 'warning');
-            return Promise.reject(error);
-        })
-    ]).then(results => {
-        // Log any failures for debugging
-        results.forEach((result, index) => {
-            if (result.status === 'rejected') {
-                console.error(`Initialization step ${index} failed:`, result.reason);
-            }
-        });
-    });
-});
+// Initialize on DOM ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeSettingsPage);
+} else {
+    initializeSettingsPage();
+}
 
 // Set up event listeners for the settings page
 async function setupEventListeners() {
@@ -259,8 +250,31 @@ async function setupEventListeners() {
     }
     
     // Check for updates button
-    const updatesBtn = document.getElementById('checkUpdatesBtn');
+    const updatesBtn = document.getElementById('checkUpdatesBtn') || document.getElementById('checkForUpdatesBtn');
     if (updatesBtn) updatesBtn.addEventListener('click', checkForUpdates);
+    
+    // Contact support button
+    const contactSupportBtn = document.getElementById('contactSupportBtn');
+    if (contactSupportBtn) {
+        contactSupportBtn.addEventListener('click', contactSupport);
+    }
+    
+    // Save security settings button
+    const saveSecurityBtn = document.getElementById('saveSecuritySettingsBtn');
+    if (saveSecurityBtn) {
+        saveSecurityBtn.addEventListener('click', saveSecuritySettings);
+    }
+    
+    // SMTP form submission
+    const smtpForm = document.getElementById('smtpForm');
+    if (smtpForm) {
+        smtpForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (typeof saveSmtpSettings === 'function') {
+                saveSmtpSettings(e);
+            }
+        });
+    }
     
     // Form submissions
     const forms = ['generalSettingsForm', 'emailSettingsForm', 'backupSettingsForm'];
@@ -786,9 +800,70 @@ function validateField(input, validator, errorMessage) {
     
     return isValid;
 }
+
+// Save SMTP settings
+async function saveSmtpSettings(event) {
+    if (event) event.preventDefault();
+    
+    try {
+        // Validate email settings first
+        if (!validateEmailSettings()) {
+            throw new Error('Please fix the validation errors before saving.');
+        }
+        
+        const smtpData = {
+            smtp_host: document.getElementById('smtpHost')?.value.trim() || '',
+            smtp_port: document.getElementById('smtpPort')?.value || '587',
+            smtp_user: document.getElementById('smtpUser')?.value.trim() || '',
+            smtp_pass: document.getElementById('smtpPass')?.value || '',
+            smtp_secure: document.getElementById('smtpSecure')?.checked ? 'true' : 'false',
+            from_email: document.getElementById('fromEmail')?.value.trim() || '',
+            from_name: document.getElementById('fromName')?.value.trim() || ''
+        };
+        
+        // Save each setting
+        for (const [key, value] of Object.entries(smtpData)) {
+            if (key === 'smtp_pass' && !value) {
+                // Don't save empty password
+                continue;
+            }
+            await settings.save(key, value);
+        }
+        
+        showToast('SMTP settings saved successfully', 'success');
+    } catch (error) {
+        console.error('Error saving SMTP settings:', error);
+        showToast(error.message || 'Failed to save SMTP settings', 'danger');
+    }
+}
+
+// Save security settings
+async function saveSecuritySettings() {
+    try {
+        const developerMode = document.getElementById('developerMode')?.checked || false;
+        await settings.save('developer_mode', developerMode.toString());
+        showToast('Security settings saved successfully', 'success');
+    } catch (error) {
+        console.error('Error saving security settings:', error);
+        showToast('Failed to save security settings', 'danger');
+    }
+}
+
+// Contact support
+function contactSupport() {
+    const email = 'aaronashong111@gmail.com';
+    const subject = 'Support Request - Wolo Pharmacy App';
+    const body = 'Please describe your issue or question here...';
+    const mailtoLink = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailtoLink;
+}
+
 // Export functions that need to be available globally
 window.toggleTheme = toggleTheme;
 window.saveSettings = saveSettings;
+window.saveSmtpSettings = saveSmtpSettings;
+window.saveSecuritySettings = saveSecuritySettings;
+window.contactSupport = contactSupport;
 window.testEmailSettings = testEmailSettings;
 window.createBackup = createBackup;
 window.restoreBackup = restoreBackup;

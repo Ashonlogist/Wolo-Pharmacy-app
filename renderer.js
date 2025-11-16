@@ -4,24 +4,75 @@ console.log('Application initializing...');
 // Import functions from other modules
 import { exportSalesToExcel } from './pages/reports.js';
 
+// Guard to prevent multiple initializations
+let appInitialized = false;
+let ipcHandlersReady = false;
+
+// Wait for IPC handlers to be ready before initializing
+if (window.electron && window.electron.ipcRenderer) {
+    window.electron.ipcRenderer.on('ipc-handlers-ready', () => {
+        console.log('IPC handlers ready signal received');
+        ipcHandlersReady = true;
+        // If DOM is already loaded, initialize now
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            initializeAppWhenReady();
+        }
+    });
+}
+
 // Check if jQuery is available
 if (typeof jQuery === 'undefined') {
     console.error('jQuery is not loaded. The application may not work correctly.');
 } else {
     console.log('jQuery version:', jQuery.fn.jquery);
     
-    // Initialize the application when DOM is ready
-    document.addEventListener('DOMContentLoaded', async () => {
-        try {
-            // Initialize the application
-            await initApp();
-            
-            // Navigation is handled by the navigation module
-            console.log('Renderer initialized');
-        } catch (error) {
-            console.error('Error initializing application:', error);
-        }
+    // Initialize the application when DOM is ready AND IPC handlers are ready
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeAppWhenReady();
     });
+    
+    // Also check if DOM is already loaded (in case script loads after DOMContentLoaded)
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        initializeAppWhenReady();
+    }
+}
+
+// Unified initialization function that waits for both DOM and IPC handlers
+async function initializeAppWhenReady() {
+    // Prevent multiple initializations
+    if (appInitialized) {
+        console.warn('Application already initialized, skipping...');
+        return;
+    }
+    
+    // Wait for IPC handlers if not ready yet (with timeout)
+    if (!ipcHandlersReady) {
+        console.log('Waiting for IPC handlers to be ready...');
+        let waitCount = 0;
+        const maxWait = 50; // 5 seconds max wait (50 * 100ms)
+        
+        while (!ipcHandlersReady && waitCount < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            waitCount++;
+        }
+        
+        if (!ipcHandlersReady) {
+            console.warn('IPC handlers not ready after timeout, proceeding anyway...');
+            // Proceed anyway to avoid infinite wait
+        }
+    }
+    
+    try {
+        appInitialized = true;
+        // Initialize the application
+        await initApp();
+        
+        // Navigation is handled by the navigation module
+        console.log('Renderer initialized');
+    } catch (error) {
+        console.error('Error initializing application:', error);
+        appInitialized = false; // Reset on error to allow retry
+    }
 }
 
 // Core Modules
@@ -110,9 +161,16 @@ async function initApp() {
         // Initialize core modules
         console.log('Initializing state...');
         if (typeof initState === 'function') {
-            await initState().catch(err => {
+            try {
+                const stateResult = initState();
+                if (stateResult && typeof stateResult.catch === 'function') {
+                    await stateResult.catch(err => {
+                        console.error('Error initializing state:', err);
+                    });
+                }
+            } catch (err) {
                 console.error('Error initializing state:', err);
-            });
+            }
         } else {
             console.warn('initState is not a function');
         }
@@ -1213,27 +1271,8 @@ window.loadSettings = async function() {
 };
 
 // Initialize the application when the DOM is fully loaded
-async function initializeApp() {
-    console.log('Wolo Inventory Management Started');
-    
-    // Setup navigation
-    setupNavigation();
-    
-    // Load initial data
-    await loadProductNames();
-    
-    // Initialize date picker
-    $('.input-daterange').datepicker({
-        format: 'yyyy-mm-dd',
-        autoclose: true
-    });
-
-    // Navigate to the current page (in case of page refresh)
-    const currentPage = document.querySelector('.page.active')?.id?.replace('-page', '') || 'dashboard';
-    navigateTo(currentPage);
-}
-
-document.addEventListener('DOMContentLoaded', initializeApp);
+// This function is now integrated into initApp() to prevent duplicate initialization
+// Removed duplicate DOMContentLoaded listener to prevent multiple initializations
 
 // Set up event listeners
 function setupEventListeners() {
@@ -1670,11 +1709,10 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-document.addEventListener('DOMContentLoaded', async () => {
+// Removed duplicate DOMContentLoaded listener - initialization is handled by initApp() at line 14
+// This code block is now integrated into initApp() to prevent multiple initializations
+async function initializeUndoRedo() {
     console.log('Wolo Inventory Management Started');
-    
-    // Setup navigation
-    setupNavigation();
     
     // Initialize undo/redo functionality
     initUndoRedo();
@@ -1751,7 +1789,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             priceInput.addEventListener('input', calculateSaleTotal);
         }
     }
-});
+}
 
 // Handle help form submission
 async function handleHelpSubmit(event) {
@@ -2160,24 +2198,8 @@ async function handleSaleSubmit(event) {
 
 // Render sales table with the provided sales data - using the implementation from line 132
 
-// Call this function when the page loads and after adding new products
-document.addEventListener('DOMContentLoaded', () => {
-    // Initialize navigation
-    setupNavigation();
-    
-    // Load initial data
-    loadProductNames();
-    
-    // Initialize date picker
-    $('.input-daterange').datepicker({
-        format: 'yyyy-mm-dd',
-        autoclose: true
-    });
-
-    // Navigate to the current page (in case of page refresh)
-    const currentPage = document.querySelector('.page.active')?.id?.replace('-page', '') || 'dashboard';
-    navigateTo(currentPage);
-});
+// Removed duplicate DOMContentLoaded listener - initialization is handled by initApp() at line 14
+// This prevents multiple initializations that cause infinite loading loops
 
 // Refresh data
 async function refreshData() {
@@ -2986,12 +3008,18 @@ async function sendEmailReport(event) {
         }
         
         // Get SMTP settings
+        const hostResult = await ipcRenderer.invoke('get-setting', { key: 'smtp_host' });
+        const portResult = await ipcRenderer.invoke('get-setting', { key: 'smtp_port' });
+        const secureResult = await ipcRenderer.invoke('get-setting', { key: 'smtp_secure' });
+        const userResult = await ipcRenderer.invoke('get-setting', { key: 'smtp_user' });
+        const passResult = await ipcRenderer.invoke('get-setting', { key: 'smtp_pass' });
+        
         const smtpConfig = {
-            host: await ipcRenderer.invoke('get-setting', 'smtp_host') || 'smtp.gmail.com',
-            port: parseInt(await ipcRenderer.invoke('get-setting', 'smtp_port')) || 587,
-            secure: (await ipcRenderer.invoke('get-setting', 'smtp_secure')) === 'true',
-            user: await ipcRenderer.invoke('get-setting', 'smtp_user'),
-            pass: await ipcRenderer.invoke('get-setting', 'smtp_pass')
+            host: (hostResult && hostResult.success && hostResult.value) || 'smtp.gmail.com',
+            port: parseInt((portResult && portResult.success && portResult.value) || '587'),
+            secure: (secureResult && secureResult.success && secureResult.value) === 'true',
+            user: (userResult && userResult.success && userResult.value) || '',
+            pass: (passResult && passResult.success && passResult.value) || ''
         };
         
         if (!smtpConfig.user || !smtpConfig.pass) {

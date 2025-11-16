@@ -12,7 +12,8 @@
     "start": "cross-env NODE_ENV=development electron .",
     "dev": "cross-env NODE_ENV=development DEBUG_PROD=true electron .",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
     "better-sqlite3": "^9.2.2",
@@ -26,7 +27,8 @@
   "devDependencies": {
     "cross-env": "^10.1.0",
     "electron": "^28.1.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "@electron/rebuild": "^3.6.0"
   },
   "build": {
     "appId": "com.wolo-pharmacy.app",
