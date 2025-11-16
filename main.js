@@ -31,6 +31,20 @@ function registerIpcHandlers() {
   
   console.log('Starting IPC handler registration...');
   
+  // Handle splash screen completion
+  ipcMain.on('splash-complete', (event) => {
+    console.log('Splash screen completed, showing main window');
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    // Close the splash window
+    const splashWindow = BrowserWindow.fromWebContents(event.sender);
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+    }
+  });
+  
   // Add save dialog handler
   ipcMain.handle('show-save-dialog', async (event, options) => {
     try {
@@ -310,6 +324,138 @@ function registerIpcHandlers() {
     }
   });
   
+  // Import products (bulk)
+  ipcMain.handle('import-products', async (event, productsArray) => {
+    const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
+    const now = new Date().toISOString();
+    
+    try {
+      if (!Array.isArray(productsArray) || productsArray.length === 0) {
+        return {
+          success: false,
+          error: 'No products provided for import',
+          insertedCount: 0
+        };
+      }
+      
+      let insertedCount = 0;
+      let skippedCount = 0;
+      const errors = [];
+      
+      // Start transaction for bulk insert
+      db.exec('BEGIN TRANSACTION');
+      
+      try {
+        for (let i = 0; i < productsArray.length; i++) {
+          const productData = productsArray[i];
+          
+          try {
+            // Generate ID if not provided
+            if (!productData.id) {
+              productData.id = uuidv4();
+            }
+            
+            // Set timestamps
+            productData.created_at = now;
+            productData.updated_at = now;
+            
+            // Ensure required fields
+            productData.is_active = productData.is_active !== undefined ? productData.is_active : 1;
+            productData.quantity_in_stock = productData.quantity_in_stock || productData.quantityInStock || 0;
+            productData.quantity_on_shelf = productData.quantity_on_shelf || productData.quantityOnShelf || 0;
+            productData.cost_price = productData.cost_price || productData.costPrice || productData.purchasePrice || 0;
+            productData.selling_price = productData.selling_price || productData.sellingPrice || 0;
+            productData.total_bulk_cost = productData.total_bulk_cost || productData.totalBulkCost || (productData.cost_price * productData.quantity_in_stock);
+            productData.quantity_purchased = productData.quantity_purchased || productData.quantityPurchased || productData.quantity_in_stock;
+            
+            // Map field names (handle both snake_case and camelCase)
+            const mappedData = {
+              id: productData.id,
+              name: productData.name || '',
+              description: productData.description || '',
+              barcode: productData.barcode || null,
+              category: productData.category || productData.productCategory || '',
+              sku: productData.sku || null,
+              quantity_in_stock: parseInt(productData.quantity_in_stock || 0),
+              quantity_on_shelf: parseInt(productData.quantity_on_shelf || 0),
+              quantity_purchased: parseInt(productData.quantity_purchased || 0),
+              cost_price: parseFloat(productData.cost_price || 0),
+              total_bulk_cost: parseFloat(productData.total_bulk_cost || 0),
+              selling_price: parseFloat(productData.selling_price || 0),
+              profit_margin: parseFloat(productData.profit_margin || productData.profitMargin || 0),
+              reorder_level: parseInt(productData.reorder_level || productData.reorderLevel || 10),
+              expiry_date: productData.expiry_date || productData.expiryDate || null,
+              manufactured_date: productData.manufactured_date || productData.manufacturedDate || null,
+              supplier_name: productData.supplier_name || productData.supplier || '',
+              supplier_contact: productData.supplier_contact || '',
+              notes: productData.notes || '',
+              is_active: 1,
+              created_at: now,
+              updated_at: now
+            };
+            
+            // Validate required fields
+            if (!mappedData.name || mappedData.name.trim() === '') {
+              errors.push(`Row ${i + 1}: Product name is required`);
+              skippedCount++;
+              continue;
+            }
+            
+            // Check for duplicate barcode if provided
+            if (mappedData.barcode) {
+              const existing = db.prepare('SELECT id FROM products WHERE barcode = ? AND is_active = 1').get(mappedData.barcode);
+              if (existing) {
+                errors.push(`Row ${i + 1}: Product with barcode ${mappedData.barcode} already exists`);
+                skippedCount++;
+                continue;
+              }
+            }
+            
+            // Prepare SQL
+            const columns = Object.keys(mappedData).join(', ');
+            const placeholders = Object.keys(mappedData).map(() => '?').join(', ');
+            const values = Object.values(mappedData);
+            
+            const sql = `INSERT INTO products (${columns}) VALUES (${placeholders})`;
+            db.prepare(sql).run(...values);
+            insertedCount++;
+            
+          } catch (error) {
+            errors.push(`Row ${i + 1}: ${error.message}`);
+            skippedCount++;
+            console.error(`Error importing product at row ${i + 1}:`, error);
+          }
+        }
+        
+        // Commit transaction
+        db.exec('COMMIT');
+        
+        return {
+          success: true,
+          insertedCount,
+          skippedCount,
+          errors: errors.length > 0 ? errors : undefined,
+          message: `Successfully imported ${insertedCount} product(s)${skippedCount > 0 ? `, skipped ${skippedCount}` : ''}`
+        };
+        
+      } catch (error) {
+        // Rollback on error
+        db.exec('ROLLBACK');
+        throw error;
+      }
+      
+    } catch (error) {
+      console.error('Error importing products:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to import products',
+        insertedCount: 0
+      };
+    } finally {
+      if (db) db.close();
+    }
+  });
+  
   // Update product
   ipcMain.handle('update-product', async (event, { id, updates }) => {
     const db = new Database(path.join(app.getPath('userData'), 'wolo-inventory.db'));
@@ -493,6 +639,80 @@ function registerIpcHandlers() {
     } catch (error) {
       console.error('Error deleting category:', error);
       return { success: false, error: error.message || 'Failed to delete category' };
+    }
+  });
+
+  // Reset all data handler - clears all tables
+  ipcMain.handle('reset-all-data', async (event) => {
+    try {
+      console.log('Resetting all data...');
+      
+      // Start a transaction
+      db.exec('BEGIN TRANSACTION');
+      
+      try {
+        // Delete all data from all tables (in order to respect foreign keys)
+        // Use try-catch for each delete in case table doesn't exist
+        try {
+          db.prepare('DELETE FROM sale_items').run();
+        } catch (e) {
+          console.warn('sale_items table may not exist:', e.message);
+        }
+        
+        try {
+          db.prepare('DELETE FROM sales').run();
+        } catch (e) {
+          console.warn('sales table may not exist:', e.message);
+        }
+        
+        try {
+          db.prepare('DELETE FROM products').run();
+        } catch (e) {
+          console.warn('products table may not exist:', e.message);
+        }
+        
+        try {
+          db.prepare('DELETE FROM suppliers').run();
+        } catch (e) {
+          console.warn('suppliers table may not exist:', e.message);
+        }
+        
+        // Only delete settings that are not user_name (preserve user name)
+        try {
+          db.prepare('DELETE FROM settings WHERE key != ?').run('user_name');
+        } catch (e) {
+          console.warn('settings table may not exist:', e.message);
+        }
+        
+        // Reset auto-increment sequences (SQLite uses sqlite_sequence table)
+        // Check if sqlite_sequence table exists first
+        try {
+          const sequenceCheck = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'").get();
+          if (sequenceCheck) {
+            db.prepare('DELETE FROM sqlite_sequence WHERE name IN ("products", "sales", "sale_items", "suppliers")').run();
+          }
+        } catch (e) {
+          // sqlite_sequence table doesn't exist or error - this is fine, just log it
+          console.log('sqlite_sequence table does not exist or error accessing it:', e.message);
+        }
+        
+        // Commit the transaction
+        db.exec('COMMIT');
+        
+        console.log('All data reset successfully');
+        return { success: true, message: 'All data has been reset successfully' };
+      } catch (error) {
+        // Rollback on error
+        try {
+          db.exec('ROLLBACK');
+        } catch (rollbackError) {
+          console.error('Error during rollback:', rollbackError);
+        }
+        throw error;
+      }
+    } catch (error) {
+      console.error('Error resetting all data:', error);
+      return { success: false, error: error.message || 'Failed to reset all data' };
     }
   });
 
@@ -1677,6 +1897,7 @@ function initDatabase() {
     }
   });
 }
+
 
 
 // Create the main window

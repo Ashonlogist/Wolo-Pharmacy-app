@@ -265,6 +265,25 @@ async function setupEventListeners() {
         saveSecurityBtn.addEventListener('click', saveSecuritySettings);
     }
     
+    // Save user name button
+    const saveUserNameBtn = document.getElementById('saveUserNameBtn');
+    if (saveUserNameBtn) {
+        saveUserNameBtn.addEventListener('click', saveUserName);
+    }
+    
+    // Reset all data button and checkbox
+    const resetBtn = document.getElementById('resetAllDataBtn');
+    const confirmCheckbox = document.getElementById('confirmResetCheckbox');
+    if (resetBtn && confirmCheckbox) {
+        // Enable/disable reset button based on checkbox
+        confirmCheckbox.addEventListener('change', (e) => {
+            resetBtn.disabled = !e.target.checked;
+        });
+        
+        // Handle reset button click
+        resetBtn.addEventListener('click', resetAllData);
+    }
+    
     // SMTP form submission
     const smtpForm = document.getElementById('smtpForm');
     if (smtpForm) {
@@ -293,6 +312,7 @@ async function loadSettings() {
     
     try {
         const keys = [
+            'user_name',
             'developer_mode',
             'company_name',
             'company_address',
@@ -318,12 +338,24 @@ async function loadSettings() {
         values.forEach(({ key, value, success }) => {
             if (!success) return;
             
-            const element = document.getElementById(key);
-            if (element) {
-                if (element.type === 'checkbox') {
-                    element.checked = value === 'true' || value === true;
-                } else {
+            // Map user_name to userNameSetting input
+            if (key === 'user_name') {
+                const element = document.getElementById('userNameSetting');
+                if (element) {
                     element.value = value;
+                }
+                // Update global user name
+                if (value && typeof window.updateUIWithUserName === 'function') {
+                    window.updateUIWithUserName(value);
+                }
+            } else {
+                const element = document.getElementById(key);
+                if (element) {
+                    if (element.type === 'checkbox') {
+                        element.checked = value === 'true' || value === true;
+                    } else {
+                        element.value = value;
+                    }
                 }
             }
         });
@@ -849,6 +881,103 @@ async function saveSecuritySettings() {
     }
 }
 
+// Save user name
+async function saveUserName() {
+    const userNameInput = document.getElementById('userNameSetting');
+    if (!userNameInput) return;
+    
+    const userName = userNameInput.value.trim();
+    if (!userName) {
+        showToast('Please enter your name', 'warning');
+        return;
+    }
+    
+    try {
+        const result = await handleIpcCall(settings.save, 'user_name', userName);
+        if (result?.success) {
+            showToast(`Name updated to ${userName}!`, 'success');
+            // Update global user name
+            if (typeof window.updateUIWithUserName === 'function') {
+                window.updateUIWithUserName(userName);
+            }
+        } else {
+            showToast('Failed to save name. Please try again.', 'danger');
+        }
+    } catch (error) {
+        console.error('Error saving user name:', error);
+        showToast('Failed to save name: ' + error.message, 'danger');
+    }
+}
+
+// Reset all data function
+async function resetAllData() {
+    const confirmCheckbox = document.getElementById('confirmResetCheckbox');
+    const resetBtn = document.getElementById('resetAllDataBtn');
+    
+    if (!confirmCheckbox || !confirmCheckbox.checked) {
+        showToast('Please confirm that you understand this action cannot be undone', 'warning');
+        return;
+    }
+    
+    // Double confirmation with user's name
+    const userName = await getUserName();
+    const userNameText = userName ? `, ${userName}` : '';
+    const confirmMessage = `Are you absolutely sure you want to delete ALL data${userNameText}? This action cannot be undone!`;
+    
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+    
+    // Final confirmation
+    const finalConfirm = confirm('This is your last chance. Type OK to confirm deletion of ALL data.');
+    if (finalConfirm !== true) {
+        return;
+    }
+    
+    try {
+        // Show loading
+        resetBtn.disabled = true;
+        resetBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Resetting...';
+        
+        // Call reset IPC handler
+        const result = await handleIpcCall(async () => {
+            const { ipcCall } = await import('../core/api.js');
+            return await ipcCall('reset-all-data');
+        });
+        
+        if (result?.success) {
+            showToast('All data has been reset successfully', 'success');
+            // Reset checkbox and button
+            confirmCheckbox.checked = false;
+            resetBtn.disabled = true;
+            resetBtn.innerHTML = '<i class="bi bi-trash"></i> Reset All Data';
+            
+            // Reload the page after a short delay
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            throw new Error(result?.error || 'Failed to reset data');
+        }
+    } catch (error) {
+        console.error('Error resetting all data:', error);
+        showToast('Failed to reset data: ' + error.message, 'danger');
+        resetBtn.disabled = false;
+        resetBtn.innerHTML = '<i class="bi bi-trash"></i> Reset All Data';
+    }
+}
+
+// Helper to get user name
+async function getUserName() {
+    try {
+        const result = await settings.get('user_name');
+        return result?.value || '';
+    } catch (error) {
+        console.error('Error getting user name:', error);
+        return '';
+    }
+}
+
 // Contact support
 function contactSupport() {
     const email = 'aaronashong111@gmail.com';
@@ -863,6 +992,9 @@ window.toggleTheme = toggleTheme;
 window.saveSettings = saveSettings;
 window.saveSmtpSettings = saveSmtpSettings;
 window.saveSecuritySettings = saveSecuritySettings;
+window.saveUserName = saveUserName;
+window.resetAllData = resetAllData;
+window.getUserName = getUserName;
 window.contactSupport = contactSupport;
 window.testEmailSettings = testEmailSettings;
 window.createBackup = createBackup;

@@ -449,10 +449,10 @@ async function completeSale() {
                 }
             }
             
-            // Refresh dashboard if it's loaded
+            // Refresh dashboard if it's loaded (force refresh to bypass cache)
             if (typeof window.refreshDashboard === 'function') {
                 try {
-                    await window.refreshDashboard();
+                    await window.refreshDashboard(true); // Force refresh to get updated sales data
                 } catch (e) {
                     console.warn('Could not refresh dashboard:', e);
                 }

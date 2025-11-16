@@ -70,16 +70,22 @@ async function initializeForm() {
             productId = hashParams.get('id');
         }
         
-        // Listen for product-edit event
-        window.addEventListener('product-edit', async (event) => {
+        // Listen for product-edit event (can be triggered from other pages)
+        const handleProductEdit = async (event) => {
             if (event.detail && event.detail.productId) {
+                console.log('Received product-edit event for ID:', event.detail.productId);
                 await loadProductForEditing(event.detail.productId);
             }
-        });
+        };
+        window.addEventListener('product-edit', handleProductEdit);
+        
+        // Also expose loadProductForEditing globally so other pages can call it directly
+        window.loadProductForEditing = loadProductForEditing;
         
         const isEdit = !!productId;
         
         if (productId) {
+            console.log('Loading product for editing from URL:', productId);
             await loadProductForEditing(productId);
         } else {
             // For new products, generate a unique ID using uuid
@@ -657,17 +663,7 @@ async function handleFormSubmit(event) {
                 if (result.data.barcode) document.getElementById('barcode').value = result.data.barcode;
             }
             
-            return savedProductId;
-            
-        } catch (error) {
-            console.error('Error during save operation:', error);
-            throw new Error(`Save failed: ${error.message || 'Unknown error'}`);
-        }
-        
-        // After successful save
-        try {
-            const savedProductId = result.id || result.productId || productId;
-            
+            // After successful save - handle navigation and refresh
             if (isEdit) {
                 // For updates, show success message and reload the product
                 showToast('Product updated successfully!', 'success', 3000);
@@ -682,43 +678,85 @@ async function handleFormSubmit(event) {
                     }
                 }, 500);
             } else {
-                // For new products, show success and navigate back to products page
+                // For new products, show success message
                 showToast('Product created successfully!', 'success', 3000);
                 
-                // Refresh products list if available
+                // Refresh products list and dashboard in parallel for faster execution
+                const refreshPromises = [];
+                
                 if (typeof window.loadProducts === 'function') {
-                    try {
-                        await window.loadProducts();
-                    } catch (e) {
-                        console.warn('Could not refresh products list:', e);
-                    }
+                    refreshPromises.push(
+                        window.loadProducts().catch(e => {
+                            console.warn('Could not refresh products list:', e);
+                        })
+                    );
                 }
                 
-                // Refresh dashboard if available
                 if (typeof window.refreshDashboard === 'function') {
+                    refreshPromises.push(
+                        window.refreshDashboard(true).catch(e => {
+                            console.warn('Could not refresh dashboard:', e);
+                        })
+                    );
+                }
+                
+                // Wait for refreshes to complete, then navigate
+                await Promise.allSettled(refreshPromises);
+                
+                // Navigate to products page immediately after refresh
+                // Try multiple navigation methods to ensure it works
+                let navigated = false;
+                
+                if (typeof window.navigateTo === 'function') {
                     try {
-                        await window.refreshDashboard();
+                        await window.navigateTo('products');
+                        navigated = true;
+                        console.log('Navigated to products page via window.navigateTo');
                     } catch (e) {
-                        console.warn('Could not refresh dashboard:', e);
+                        console.warn('Navigation via window.navigateTo failed:', e);
                     }
                 }
                 
-                // Navigate back to products page after a short delay
-                setTimeout(() => {
-                    if (window.navigateTo) {
-                        window.navigateTo('products');
-                    } else if (window.app && window.app.navigateTo) {
-                        window.app.navigateTo('products');
-                    } else {
-                        // Fallback: use hash navigation
-                        window.location.hash = 'products';
+                if (!navigated && window.app && typeof window.app.navigateTo === 'function') {
+                    try {
+                        await window.app.navigateTo('products');
+                        navigated = true;
+                        console.log('Navigated to products page via window.app.navigateTo');
+                    } catch (e) {
+                        console.warn('Navigation via window.app.navigateTo failed:', e);
                     }
-                }, 1000);
+                }
+                
+                if (!navigated) {
+                    // Fallback: use hash navigation and direct page switching
+                    window.location.hash = '#products';
+                    console.log('Using hash navigation fallback');
+                    
+                    // Also try direct page switching as last resort
+                    setTimeout(() => {
+                        const productsPage = document.getElementById('products-page');
+                        const productFormPage = document.getElementById('product-form-page');
+                        if (productsPage && productFormPage) {
+                            productFormPage.classList.remove('active');
+                            productsPage.classList.add('active');
+                            
+                            // Update navigation active state
+                            document.querySelectorAll('.nav-item').forEach(item => {
+                                item.classList.remove('active');
+                                if (item.getAttribute('data-page') === 'products') {
+                                    item.classList.add('active');
+                                }
+                            });
+                            
+                            console.log('Direct page switch completed');
+                        }
+                    }, 100);
+                }
             }
-        } catch (loadError) {
-            console.error('Error after saving:', loadError);
-            // Don't show error to user since save was successful
-            showToast('Product saved, but there was an error refreshing the view', 'warning', 3000);
+            
+        } catch (error) {
+            console.error('Error during save operation:', error);
+            throw new Error(`Save failed: ${error.message || 'Unknown error'}`);
         }
     } catch (error) {
         console.error('Error saving product:', error);

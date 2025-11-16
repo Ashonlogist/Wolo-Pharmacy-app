@@ -155,6 +155,9 @@ async function initApp() {
     try {
         console.log('Initializing application...');
         
+        // Initialize splash screen progress
+        initSplashScreen();
+        
         // Load core modules first
         await loadCoreModules();
         
@@ -213,10 +216,13 @@ async function initApp() {
         // Show appropriate status message
         if (isElectronAvailable()) {
             console.log('Running in Electron environment');
+            // Get user name for personalized greeting
+            const userName = await getUserName();
+            const greeting = userName ? `Welcome back, ${userName}!` : 'Welcome to Wolo Inventory Management';
             if (typeof showToast === 'function') {
-                showToast('Welcome to Wolo Inventory Management', 'success');
+                showToast(greeting, 'success');
             } else {
-                console.log('Welcome to Wolo Inventory Management');
+                console.log(greeting);
             }
         } else {
             const errorMsg = 'Electron API not available. This application must run inside Electron.';
@@ -239,6 +245,12 @@ async function initApp() {
             console.warn('loadInitialData is not a function');
         }
         
+        // Hide splash screen and show main content
+        hideSplashScreen();
+        
+        // Check if user name is set, show welcome modal if not
+        await checkAndShowWelcomeModal();
+        
         // Navigate to the current page or dashboard
         const currentPage = window.location.hash.substring(1) || 'dashboard';
         console.log('Navigating to:', currentPage);
@@ -255,8 +267,202 @@ async function initApp() {
         console.error('Failed to initialize application:', error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         showToast(`Failed to initialize: ${errorMessage}`, 'danger');
+        // Hide splash even on error
+        hideSplashScreen();
     }
 }
+
+// Splash screen management
+function showSplashScreen() {
+    const splashScreen = document.getElementById('splash-screen');
+    const mainContent = document.getElementById('mainContent');
+    if (splashScreen) {
+        splashScreen.style.display = 'flex';
+        splashScreen.classList.remove('fade-out');
+    }
+    if (mainContent) {
+        mainContent.style.display = 'none';
+    }
+}
+
+function hideSplashScreen() {
+    const splashScreen = document.getElementById('splash-screen');
+    const mainContent = document.getElementById('mainContent');
+    
+    if (splashScreen) {
+        // Animate progress to 100%
+        const progressBar = document.getElementById('splashProgressBar');
+        const loadingText = document.getElementById('splashLoadingText');
+        
+        if (progressBar) {
+            progressBar.style.width = '100%';
+        }
+        if (loadingText) {
+            loadingText.textContent = 'Ready!';
+        }
+        
+        // Fade out splash screen
+        setTimeout(() => {
+            splashScreen.classList.add('fade-out');
+            setTimeout(() => {
+                splashScreen.style.display = 'none';
+                if (mainContent) {
+                    mainContent.style.display = 'block';
+                    mainContent.classList.add('fade-in');
+                }
+            }, 500);
+        }, 500);
+    } else if (mainContent) {
+        mainContent.style.display = 'block';
+        mainContent.classList.add('fade-in');
+    }
+}
+
+// Initialize splash screen progress animation
+function initSplashScreen() {
+    const splashScreen = document.getElementById('splash-screen');
+    if (!splashScreen) return;
+    
+    const progressBar = document.getElementById('splashProgressBar');
+    const loadingText = document.getElementById('splashLoadingText');
+    
+    if (!progressBar || !loadingText) return;
+    
+    const loadingSteps = [
+        { text: 'Initializing database...', progress: 20 },
+        { text: 'Loading modules...', progress: 40 },
+        { text: 'Setting up interface...', progress: 60 },
+        { text: 'Preparing data...', progress: 80 },
+        { text: 'Almost ready...', progress: 95 }
+    ];
+    
+    let currentStep = 0;
+    
+    function updateProgress() {
+        if (currentStep < loadingSteps.length) {
+            const step = loadingSteps[currentStep];
+            loadingText.textContent = step.text;
+            progressBar.style.width = step.progress + '%';
+            currentStep++;
+            
+            if (currentStep < loadingSteps.length) {
+                setTimeout(updateProgress, 600);
+            }
+        }
+    }
+    
+    // Start progress animation after a short delay
+    setTimeout(updateProgress, 300);
+}
+
+// Check if user name is set and show welcome modal if not
+async function checkAndShowWelcomeModal() {
+    try {
+        // Import settings API
+        const { settings } = await import('./core/api.js');
+        
+        // Check if user name exists
+        const userNameResult = await settings.get('user_name');
+        const userName = userNameResult?.value || '';
+        
+        if (!userName || userName.trim() === '') {
+            // Show welcome modal
+            const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
+            welcomeModal.show();
+            
+            // Set up form submission
+            const welcomeForm = document.getElementById('welcomeForm');
+            if (welcomeForm) {
+                welcomeForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const userNameInput = document.getElementById('userNameInput');
+                    const userName = userNameInput?.value?.trim();
+                    
+                    if (userName) {
+                        try {
+                            const result = await settings.save('user_name', userName);
+                            if (result?.success) {
+                                welcomeModal.hide();
+                                // Show personalized welcome message
+                                if (typeof showToast === 'function') {
+                                    showToast(`Welcome, ${userName}! Let's get started.`, 'success');
+                                }
+                                // Update UI with user name
+                                updateUIWithUserName(userName);
+                            } else {
+                                showToast('Failed to save your name. Please try again.', 'danger');
+                            }
+                        } catch (error) {
+                            console.error('Error saving user name:', error);
+                            showToast('Failed to save your name. Please try again.', 'danger');
+                        }
+                    }
+                });
+            }
+        } else {
+            // User name exists, update UI
+            updateUIWithUserName(userName);
+        }
+    } catch (error) {
+        console.error('Error checking user name:', error);
+    }
+}
+
+// Update UI elements with user name
+async function updateUIWithUserName(userName) {
+    if (!userName) {
+        // Try to load it from settings
+        try {
+            const { settings } = await import('./core/api.js');
+            const result = await settings.get('user_name');
+            userName = result?.value || '';
+        } catch (error) {
+            console.error('Error loading user name:', error);
+        }
+    }
+    
+    if (userName) {
+        // Store in window for easy access
+        window.userName = userName;
+        
+        // Update dashboard welcome message if it exists
+        const dashboardHeader = document.querySelector('#dashboard-page .page-header h1');
+        if (dashboardHeader && !dashboardHeader.dataset.originalText) {
+            dashboardHeader.dataset.originalText = dashboardHeader.textContent;
+            // You can customize this greeting
+        }
+        
+        // Update settings page user name input
+        const userNameSetting = document.getElementById('userNameSetting');
+        if (userNameSetting) {
+            userNameSetting.value = userName;
+        }
+    }
+}
+
+// Get user name (helper function)
+async function getUserName() {
+    if (window.userName) {
+        return window.userName;
+    }
+    
+    try {
+        const { settings } = await import('./core/api.js');
+        const result = await settings.get('user_name');
+        const userName = result?.value || '';
+        if (userName) {
+            window.userName = userName;
+        }
+        return userName;
+    } catch (error) {
+        console.error('Error getting user name:', error);
+        return '';
+    }
+}
+
+// Expose functions globally
+window.getUserName = getUserName;
+window.updateUIWithUserName = updateUIWithUserName;
 
 // Development-only initialization removed. The app must run inside Electron with real backend IPC.
 
@@ -585,6 +791,128 @@ async function parseExcel(fileContent, file) {
     return [];
 }
 
+// Enhanced undo/redo system that works across all pages
+const globalUndoRedo = {
+    history: [],
+    currentIndex: -1,
+    maxHistory: 100,
+    
+    // Save action to history
+    saveAction: function(action) {
+        // Remove any future actions if we're in the middle of history
+        if (this.currentIndex < this.history.length - 1) {
+            this.history = this.history.slice(0, this.currentIndex + 1);
+        }
+        
+        // Add new action
+        this.history.push({
+            ...action,
+            timestamp: Date.now()
+        });
+        
+        // Limit history size
+        if (this.history.length > this.maxHistory) {
+            this.history.shift();
+        } else {
+            this.currentIndex++;
+        }
+        
+        this.updateButtons();
+    },
+    
+    // Undo last action
+    undo: async function() {
+        if (this.currentIndex < 0) return false;
+        
+        const action = this.history[this.currentIndex];
+        if (action && action.undo) {
+            try {
+                await action.undo();
+                this.currentIndex--;
+                this.updateButtons();
+                if (typeof showToast === 'function') {
+                    showToast('Action undone', 'success');
+                }
+                return true;
+            } catch (error) {
+                console.error('Error undoing action:', error);
+                if (typeof showToast === 'function') {
+                    showToast('Failed to undo action', 'danger');
+                }
+                return false;
+            }
+        }
+        return false;
+    },
+    
+    // Redo last undone action
+    redo: async function() {
+        if (this.currentIndex >= this.history.length - 1) return false;
+        
+        this.currentIndex++;
+        const action = this.history[this.currentIndex];
+        if (action && action.redo) {
+            try {
+                await action.redo();
+                this.updateButtons();
+                if (typeof showToast === 'function') {
+                    showToast('Action redone', 'success');
+                }
+                return true;
+            } catch (error) {
+                console.error('Error redoing action:', error);
+                if (typeof showToast === 'function') {
+                    showToast('Failed to redo action', 'danger');
+                }
+                return false;
+            }
+        }
+        return false;
+    },
+    
+    // Check if undo is available
+    canUndo: function() {
+        return this.currentIndex >= 0;
+    },
+    
+    // Check if redo is available
+    canRedo: function() {
+        return this.currentIndex < this.history.length - 1;
+    },
+    
+    // Update all undo/redo buttons
+    updateButtons: function() {
+        const canUndo = this.canUndo();
+        const canRedo = this.canRedo();
+        
+        // Update products page buttons
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        if (undoBtn) undoBtn.disabled = !canUndo;
+        if (redoBtn) redoBtn.disabled = !canRedo;
+        
+        // Update sales page buttons
+        const undoBtnSales = document.getElementById('undoBtnSales');
+        const redoBtnSales = document.getElementById('redoBtnSales');
+        if (undoBtnSales) undoBtnSales.disabled = !canUndo;
+        if (redoBtnSales) redoBtnSales.disabled = !canRedo;
+    }
+};
+
+// Global undo/redo handlers
+async function handleGlobalUndo() {
+    await globalUndoRedo.undo();
+}
+
+async function handleGlobalRedo() {
+    await globalUndoRedo.redo();
+}
+
+// Expose globally
+window.globalUndoRedo = globalUndoRedo;
+window.handleGlobalUndo = handleGlobalUndo;
+window.handleGlobalRedo = handleGlobalRedo;
+
 // Initialize drag and drop
 function initializeDragAndDrop() {
     const dropZone = document.getElementById('drop-zone');
@@ -653,7 +981,7 @@ function initializeDragAndDrop() {
         handleFiles(files);
     }
     
-    function handleFiles(files) {
+    async function handleFiles(files) {
         if (!files || files.length === 0) return;
         
         // Only process the first file for now
@@ -666,20 +994,140 @@ function initializeDragAndDrop() {
             return;
         }
         
-        // Update UI
-        const fileName = file.name.length > 30 ? file.name.substring(0, 27) + '...' : file.name;
+        // Update file info display
+        const fileNameEl = document.getElementById('fileName');
+        const fileSizeEl = document.getElementById('fileSize');
+        const fileInfoEl = document.getElementById('fileInfo');
+        
+        if (fileNameEl) fileNameEl.textContent = file.name;
+        if (fileSizeEl) fileSizeEl.textContent = formatFileSize(file.size);
+        if (fileInfoEl) fileInfoEl.style.display = 'block';
+        
+        // Update drop zone
         dropZone.innerHTML = `
-            <i class="bi bi-file-earmark-text fs-1"></i>
-            <p class="mt-2 mb-1">${fileName}</p>
+            <i class="bi bi-file-earmark-check fs-1 text-success"></i>
+            <p class="mt-2 mb-1"><strong>${file.name}</strong></p>
             <p class="small text-muted">${formatFileSize(file.size)} • ${fileExt.toUpperCase()}</p>
-            <button class="btn btn-sm btn-outline-secondary mt-2" onclick="event.stopPropagation(); document.getElementById('file-input').value = ''; initializeDragAndrop();">
-                Change File
+            <button class="btn btn-sm btn-outline-secondary mt-2" id="changeFileBtn">
+                <i class="bi bi-x-circle"></i> Change File
             </button>
         `;
+        
+        // Add change file button handler
+        const changeFileBtn = document.getElementById('changeFileBtn');
+        if (changeFileBtn) {
+            changeFileBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.value = '';
+                initializeDragAndDrop();
+                const previewEl = document.getElementById('importPreview');
+                if (previewEl) previewEl.style.display = 'none';
+                if (fileInfoEl) fileInfoEl.style.display = 'none';
+            });
+        }
+        
+        // Preview file contents
+        try {
+            await previewImportFile(file);
+        } catch (error) {
+            console.error('Error previewing file:', error);
+            showToast('Error reading file. Please try again.', 'warning');
+        }
         
         // Enable process button
         if (processBtn) {
             processBtn.disabled = false;
+        }
+    }
+    
+    // Preview import file
+    async function previewImportFile(file) {
+        const previewEl = document.getElementById('importPreview');
+        const previewTableBody = document.getElementById('previewTableBody');
+        const previewCount = document.getElementById('previewCount');
+        const importErrors = document.getElementById('importErrors');
+        const errorList = document.getElementById('errorList');
+        
+        if (!previewEl || !previewTableBody) return;
+        
+        try {
+            // Read and parse file
+            const fileContent = await readFileContent(file);
+            const fileExt = file.name.split('.').pop().toLowerCase();
+            
+            let products = [];
+            if (fileExt === 'csv') {
+                products = parseCSV(fileContent);
+            } else if (['xlsx', 'xls'].includes(fileExt)) {
+                products = await parseExcel(fileContent, file);
+            }
+            
+            if (!Array.isArray(products) || products.length === 0) {
+                previewEl.style.display = 'none';
+                return;
+            }
+            
+            // Show preview (first 10 items)
+            const previewItems = products.slice(0, 10);
+            const errors = [];
+            
+            previewTableBody.innerHTML = previewItems.map((product, index) => {
+                const rowNum = index + 2;
+                let status = '<span class="badge bg-success">Valid</span>';
+                
+                // Validate
+                if (!product.name || !product.name.trim()) {
+                    status = '<span class="badge bg-danger">Missing Name</span>';
+                    errors.push(`Row ${rowNum}: Product name is required`);
+                } else if (isNaN(parseFloat(product.sellingPrice || product.selling_price || 0))) {
+                    status = '<span class="badge bg-warning">Invalid Price</span>';
+                    errors.push(`Row ${rowNum}: Invalid selling price`);
+                }
+                
+                return `
+                    <tr>
+                        <td>${product.name || '<em class="text-muted">N/A</em>'}</td>
+                        <td>${product.category || product.productCategory || '-'}</td>
+                        <td>${product.quantityInStock || product.quantity_in_stock || 0}</td>
+                        <td>${formatCurrency(product.costPrice || product.cost_price || product.purchasePrice || 0)}</td>
+                        <td>${formatCurrency(product.sellingPrice || product.selling_price || 0)}</td>
+                        <td>${status}</td>
+                    </tr>
+                `;
+            }).join('');
+            
+            if (products.length > 10) {
+                previewTableBody.innerHTML += `
+                    <tr>
+                        <td colspan="6" class="text-center text-muted">
+                            <em>...and ${products.length - 10} more products</em>
+                        </td>
+                    </tr>
+                `;
+            }
+            
+            if (previewCount) {
+                previewCount.textContent = products.length;
+            }
+            
+            // Show errors if any
+            if (errors.length > 0) {
+                if (errorList) {
+                    errorList.innerHTML = errors.slice(0, 5).map(e => `<li>${e}</li>`).join('');
+                    if (errors.length > 5) {
+                        errorList.innerHTML += `<li><em>...and ${errors.length - 5} more errors</em></li>`;
+                    }
+                }
+                if (importErrors) importErrors.style.display = 'block';
+            } else {
+                if (importErrors) importErrors.style.display = 'none';
+            }
+            
+            previewEl.style.display = 'block';
+            
+        } catch (error) {
+            console.error('Error previewing file:', error);
+            previewEl.style.display = 'none';
         }
     }
     
@@ -691,7 +1139,29 @@ function initializeDragAndDrop() {
         }
         
         try {
-            await importProducts(files[0]);
+            const result = await importProducts(files[0]);
+            
+            // Save to undo/redo history
+            if (result && result.success && result.insertedCount > 0 && window.globalUndoRedo) {
+                window.globalUndoRedo.saveAction({
+                    type: 'import-products',
+                    description: `Imported ${result.insertedCount} product(s)`,
+                    undo: async () => {
+                        // Note: Full undo of import would require tracking imported IDs
+                        // For now, we'll just refresh the list
+                        if (typeof window.loadProducts === 'function') {
+                            await window.loadProducts();
+                        }
+                    },
+                    redo: async () => {
+                        // Re-import would require storing the original data
+                        // For now, just refresh
+                        if (typeof window.loadProducts === 'function') {
+                            await window.loadProducts();
+                        }
+                    }
+                });
+            }
         } catch (error) {
             console.error('Import error:', error);
             // Error is already handled in importProducts
@@ -707,45 +1177,61 @@ function initializeDragAndDrop() {
     }
 }
 
-// Download CSV template
+// Download CSV template (legacy function - kept for compatibility)
 function downloadCSVTemplate() {
-    const headers = [
-        'name', 'description', 'category', 'barcode', 
-        'quantityInStock', 'reorderLevel', 'purchasePrice', 
-        'sellingPrice', 'expiryDate', 'supplier', 'notes'
-    ];
-    
-    // Create CSV content
-    let csvContent = headers.join(',') + '\n';
-    
-    // Add example row
-    const exampleRow = [
-        'Paracetamol 500mg', 
-        'Pain reliever and fever reducer', 
-        'Pain Relief', 
-        '123456789012', 
-        '100', 
-        '10', 
-        '5.99', 
-        '9.99', 
-        '2025-12-31', 
-        'ABC Pharmaceuticals', 
-        'Store in a cool, dry place'
-    ];
-    
-    csvContent += exampleRow.join(',');
-    
-    // Create download link
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'product_import_template.csv');
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadImportTemplate();
+}
+
+// Download import template
+async function downloadImportTemplate() {
+    try {
+        const template = {
+            name: 'Product Name',
+            category: 'Category',
+            barcode: 'Barcode',
+            sku: 'SKU',
+            description: 'Description',
+            quantityInStock: '10',
+            quantityOnShelf: '10',
+            costPrice: '100.00',
+            sellingPrice: '150.00',
+            totalBulkCost: '1000.00',
+            quantityPurchased: '10',
+            profitMargin: '50',
+            reorderLevel: '5',
+            expiryDate: '2025-12-31',
+            manufacturedDate: '2024-01-01',
+            supplierName: 'Supplier Name',
+            supplierContact: 'Contact Info',
+            notes: 'Notes'
+        };
+        
+        // Create CSV content
+        const headers = Object.keys(template).join(',');
+        const values = Object.values(template).join(',');
+        const csvContent = `${headers}\n${values}`;
+        
+        // Create blob and download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', 'product-import-template.csv');
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        if (typeof showToast === 'function') {
+            showToast('Template downloaded successfully', 'success');
+        }
+    } catch (error) {
+        console.error('Error downloading template:', error);
+        if (typeof showToast === 'function') {
+            showToast('Failed to download template', 'danger');
+        }
+    }
 }
 
 // Initialize drag and drop when DOM is loaded
@@ -1527,15 +2013,28 @@ const stateHistory = {
 function initUndoRedo() {
     const undoBtn = document.getElementById('undoBtn');
     const redoBtn = document.getElementById('redoBtn');
+    const undoBtnSales = document.getElementById('undoBtnSales');
+    const redoBtnSales = document.getElementById('redoBtnSales');
     
     if (undoBtn) {
-        undoBtn.addEventListener('click', handleUndo);
-        undoBtn.disabled = !stateHistory.canUndo();
+        undoBtn.addEventListener('click', handleGlobalUndo);
     }
     
     if (redoBtn) {
-        redoBtn.addEventListener('click', handleRedo);
-        redoBtn.disabled = !stateHistory.canRedo();
+        redoBtn.addEventListener('click', handleGlobalRedo);
+    }
+    
+    if (undoBtnSales) {
+        undoBtnSales.addEventListener('click', handleGlobalUndo);
+    }
+    
+    if (redoBtnSales) {
+        redoBtnSales.addEventListener('click', handleGlobalRedo);
+    }
+    
+    // Update button states
+    if (window.globalUndoRedo) {
+        window.globalUndoRedo.updateButtons();
     }
 }
 

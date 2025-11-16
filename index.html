@@ -726,15 +726,46 @@
         </nav>
     </div>
 
-    <!-- Loading Overlay -->
-    <div id="loading" class="loading-overlay" style="display: none;">
-        <div class="spinner-border text-primary" role="status">
-            <span class="visually-hidden">Loading...</span>
+    <!-- Splash Screen - Shows on app load -->
+    <div id="splash-screen" class="splash-screen">
+        <div class="splash-content">
+            <!-- Logo/Icon -->
+            <div class="splash-logo">
+                <div class="logo-icon">
+                    <i class="bi bi-book"></i>
+                </div>
+            </div>
+            
+            <!-- App Name -->
+            <h1 class="splash-title">WOLO</h1>
+            <p class="splash-subtitle">Pharmacy Inventory Management</p>
+            
+            <!-- Animated Loader -->
+            <div class="splash-loader">
+                <div class="loader-ring"></div>
+                <div class="loader-ring"></div>
+                <div class="loader-ring"></div>
+            </div>
+            
+            <!-- Progress Indicator -->
+            <div class="splash-progress">
+                <div class="progress-bar" id="splashProgressBar"></div>
+            </div>
+            
+            <!-- Loading Text -->
+            <p class="splash-loading-text" id="splashLoadingText">Initializing...</p>
+            
+            <!-- Developer Info -->
+            <div class="splash-footer">
+                <p class="splash-version">Version 1.0.0</p>
+                <p class="splash-developer">Developed by <strong>Ashong Aaron Nii Nortey</strong></p>
+                <p class="splash-email">aaronashong111@gmail.com</p>
+            </div>
         </div>
     </div>
 
-    <!-- Main Content Area -->
-    <div class="main-content">
+    <!-- Main Content Area - Hidden until splash completes -->
+    <div class="main-content" id="mainContent" style="display: none;">
     <!-- Dashboard Page -->
         <div id="dashboard-page" class="page active">
             <div class="page-header">
@@ -782,11 +813,20 @@
                         <p>Expiring Soon</p>
                     </div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-icon bg-danger">
+                        <i class="bi bi-x-circle"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="outOfStockCount">0</h3>
+                        <p>Out of Stock</p>
+                    </div>
+                </div>
             </div>
 
             <!-- Alert Sections -->
             <div class="row mt-4">
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <div class="card">
                         <div class="card-header">
                             <h5><i class="bi bi-exclamation-circle"></i> Low Stock Alerts</h5>
@@ -796,13 +836,23 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <div class="card">
                         <div class="card-header">
                             <h5><i class="bi bi-calendar-event"></i> Expiring Soon</h5>
                         </div>
                         <div class="card-body">
                             <div id="expiringList" class="alert-list"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5><i class="bi bi-x-circle"></i> Out of Stock</h5>
+                        </div>
+                        <div class="card-body">
+                            <div id="outOfStockList" class="alert-list"></div>
                         </div>
                     </div>
                 </div>
@@ -905,20 +955,67 @@
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         <div class="modal-body">
+                            <div class="info-warning info">
+                                <i class="bi bi-info-circle"></i>
+                                <div class="info-warning-text">
+                                    <strong>Import Instructions:</strong> Your file should include columns: name, category, barcode, quantityInStock, costPrice, sellingPrice, expiryDate. Download the template for the exact format.
+                                </div>
+                            </div>
+                            
                             <div class="drop-zone" id="drop-zone">
-                                <p>Drag and drop CSV or Excel files here</p>
-                                <p class="small text-muted mt-2">or</p>
-                                <button class="btn btn-outline-primary">Select Files</button>
+                                <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--primary-color);"></i>
+                                <p class="mt-3 mb-2">Drag and drop CSV or Excel files here</p>
+                                <p class="small text-muted mb-3">or</p>
+                                <button class="btn btn-outline-primary" id="selectFileBtn">
+                                    <i class="bi bi-folder2-open"></i> Select Files
+                                </button>
                                 <input type="file" id="file-input" class="d-none" accept=".csv, .xlsx, .xls">
                             </div>
-                            <div class="mt-3">
-                                <p class="small text-muted">Supported formats: .csv, .xlsx, .xls</p>
-                                <a href="#" id="downloadTemplate" class="small">Download template file</a>
+                            
+                            <!-- File Preview -->
+                            <div id="importPreview" class="mt-3" style="display: none;">
+                                <h6>Preview (<span id="previewCount">0</span> products)</h6>
+                                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light sticky-top">
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Category</th>
+                                                <th>Stock</th>
+                                                <th>Cost</th>
+                                                <th>Price</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="previewTableBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div id="importErrors" class="mt-2" style="display: none;">
+                                    <div class="alert alert-warning">
+                                        <strong>Validation Errors:</strong>
+                                        <ul id="errorList" class="mb-0 small"></ul>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3 d-flex justify-content-between align-items-center">
+                                <div>
+                                    <p class="small text-muted mb-1">Supported formats: .csv, .xlsx, .xls</p>
+                                    <a href="#" id="downloadTemplate" class="small">
+                                        <i class="bi bi-download"></i> Download template file
+                                    </a>
+                                </div>
+                                <div id="fileInfo" class="text-muted small" style="display: none;">
+                                    <span id="fileName"></span> • <span id="fileSize"></span>
+                                </div>
                             </div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                            <button type="button" class="btn btn-primary" id="processImport" disabled>Import</button>
+                            <button type="button" class="btn btn-primary" id="processImport" disabled>
+                                <i class="bi bi-upload"></i> Import Products
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1012,6 +1109,13 @@
 
             <div class="card">
                 <div class="card-body">
+                    <div class="info-warning info">
+                        <i class="bi bi-info-circle"></i>
+                        <div class="info-warning-text">
+                            <strong>Important:</strong> Fields marked with * are required. Ensure all pricing and inventory information is accurate before saving.
+                        </div>
+                    </div>
+                    
                     <form id="productForm">
                         <input type="hidden" id="productId">
                         
@@ -1023,12 +1127,14 @@
                                     <datalist id="productNamesList">
                                         <!-- Product names will be populated here -->
                                     </datalist>
+                                    <small class="form-text text-muted">Enter the full product name as it appears on packaging</small>
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label class="form-label">Barcode</label>
                                     <input type="text" class="form-control" id="productBarcode">
+                                    <small class="form-text text-muted">Enter numeric barcode for quick product lookup</small>
                                 </div>
                             </div>
                         </div>
@@ -1049,23 +1155,33 @@
                             </div>
                         </div>
 
+                        <div class="info-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <div class="info-warning-text">
+                                <strong>Pricing Information:</strong> Total Bulk Cost and Quantity Purchased are used to calculate the unit cost price automatically.
+                            </div>
+                        </div>
+                        
                         <div class="row">
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Total Bulk Cost *</label>
                                     <input type="number" step="0.01" class="form-control" id="totalBulkCost" required>
+                                    <small class="form-text text-muted">Total amount paid for the entire purchase</small>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Quantity Purchased *</label>
                                     <input type="number" class="form-control" id="quantityPurchased" required>
+                                    <small class="form-text text-muted">Total units purchased in this batch</small>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Unit Cost Price</label>
                                     <input type="text" class="form-control" id="unitCostPrice" readonly>
+                                    <small class="form-text text-muted">Calculated automatically (Bulk Cost ÷ Quantity)</small>
                                 </div>
                             </div>
                         </div>
@@ -1091,38 +1207,57 @@
                             </div>
                         </div>
 
+                        <div class="info-warning danger">
+                            <i class="bi bi-exclamation-circle"></i>
+                            <div class="info-warning-text">
+                                <strong>Inventory Tracking:</strong> Quantity in Stock should match Quantity Purchased for new products. Quantity on Shelf cannot exceed Quantity in Stock.
+                            </div>
+                        </div>
+                        
                         <div class="row">
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Quantity in Stock *</label>
                                     <input type="number" class="form-control" id="quantityInStock" required value="0">
+                                    <small class="form-text text-muted">Total available units in inventory</small>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Quantity on Shelf *</label>
                                     <input type="number" class="form-control" id="quantityOnShelf" required value="0">
+                                    <small class="form-text text-muted">Units currently displayed on sales floor</small>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
                                     <label class="form-label">Reorder Level</label>
                                     <input type="number" class="form-control" id="reorderLevel" value="10">
+                                    <small class="form-text text-muted">Alert threshold for low stock warnings</small>
                                 </div>
                             </div>
                         </div>
 
+                        <div class="info-warning danger">
+                            <i class="bi bi-calendar-x"></i>
+                            <div class="info-warning-text">
+                                <strong>Expiry Date Warning:</strong> Products expiring within 30 days will appear in the dashboard alerts. Ensure expiry dates are accurate to prevent selling expired products.
+                            </div>
+                        </div>
+                        
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label class="form-label">Manufactured Date *</label>
                                     <input type="date" class="form-control" id="manufacturedDate" required>
+                                    <small class="form-text text-muted">Date when product was manufactured</small>
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label class="form-label">Expiry Date *</label>
                                     <input type="date" class="form-control" id="expiryDate" required>
+                                    <small class="form-text text-muted">Product expiration date (critical for pharmacy items)</small>
                                 </div>
                             </div>
                         </div>
@@ -1188,6 +1323,12 @@
             <div class="card mb-4">
                 <div class="card-body">
                     <h5 class="card-title">Record New Sale</h5>
+                    <div class="info-warning info">
+                        <i class="bi bi-info-circle"></i>
+                        <div class="info-warning-text">
+                            <strong>Sale Recording:</strong> Select a product, enter quantity, and the system will automatically calculate the total. Ensure stock is available before completing the sale.
+                        </div>
+                    </div>
                     <form id="saleForm">
                         <div class="row">
                             <div class="col-md-6">
@@ -1202,6 +1343,7 @@
                                 <div class="mb-3">
                                     <label for="saleQuantity" class="form-label">Quantity</label>
                                     <input type="number" class="form-control" id="saleQuantity" min="1" value="1" required>
+                                    <small class="form-text text-danger">Cannot exceed available stock</small>
                                 </div>
                             </div>
                             <div class="col-md-2">
@@ -1514,6 +1656,27 @@
             
             <div class="card">
                 <div class="card-header">
+                    <h5><i class="bi bi-person-circle"></i> User Profile</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Your Name</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-person"></i></span>
+                            <input type="text" class="form-control" id="userNameSetting" placeholder="Enter your name">
+                        </div>
+                        <small class="form-text text-muted">This name will be used to personalize your experience throughout the app.</small>
+                    </div>
+                    <div class="text-end">
+                        <button type="button" class="btn btn-primary" id="saveUserNameBtn">
+                            <i class="bi bi-save"></i> Save Name
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
                     <h5><i class="bi bi-shield-lock"></i> Security Settings</h5>
                 </div>
                 <div class="card-body">
@@ -1541,6 +1704,38 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Reset Data Section -->
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5><i class="bi bi-exclamation-triangle"></i> Danger Zone</h5>
+                </div>
+                <div class="card-body">
+                    <div class="info-warning danger">
+                        <i class="bi bi-exclamation-circle"></i>
+                        <div class="info-warning-text">
+                            <strong>Warning:</strong> The reset action will permanently delete ALL data including products, sales, settings, and all other information. This action cannot be undone. Please ensure you have a backup before proceeding.
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <h6 class="text-danger">Reset All Data</h6>
+                        <p class="text-muted">This will clear all data from the database and reset the application to its initial state. All products, sales records, and settings will be permanently deleted.</p>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="confirmResetCheckbox">
+                            <label class="form-check-label text-danger" for="confirmResetCheckbox">
+                                <strong>I understand this action cannot be undone</strong>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="text-end">
+                        <button type="button" class="btn btn-danger" id="resetAllDataBtn" disabled>
+                            <i class="bi bi-trash"></i> Reset All Data
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
 
     </div>
@@ -1550,6 +1745,40 @@
     <div id="loadingOverlay" class="loading-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 9999; justify-content: center; align-items: center;">
         <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
             <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Welcome/User Name Modal -->
+    <div class="modal fade" id="welcomeModal" tabindex="-1" aria-labelledby="welcomeModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="welcomeModalLabel">
+                        <i class="bi bi-person-circle"></i> Welcome to Wolo Pharmacy!
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <div class="text-center mb-4">
+                        <div class="mb-3">
+                            <i class="bi bi-book" style="font-size: 3rem; color: var(--primary-color);"></i>
+                        </div>
+                        <h4>Let's get started!</h4>
+                        <p class="text-muted">Please enter your name to personalize your experience.</p>
+                    </div>
+                    <form id="welcomeForm">
+                        <div class="mb-3">
+                            <label for="userNameInput" class="form-label">Your Name *</label>
+                            <input type="text" class="form-control form-control-lg" id="userNameInput" placeholder="Enter your name" required autofocus>
+                            <small class="form-text text-muted">This will be used to personalize your experience throughout the app.</small>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-check-circle"></i> Continue
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -521,14 +521,15 @@ function renderProductsTable() {
             <td class="text-center">${expiryDate}</td>
             <td class="text-center">
                 <div class="btn-group btn-group-sm" role="group">
-                    <button class="btn btn-outline-primary" 
-                            onclick="editProduct('${product.id}')"
+                    <button class="btn btn-outline-primary edit-product-btn" 
+                            data-product-id="${product.id}"
                             data-bs-toggle="tooltip" 
                             title="Edit Product">
                         <i class="bi bi-pencil"></i>
                     </button>
-                    <button class="btn btn-outline-danger" 
-                            onclick="confirmDelete('${product.id}', '${(product.name || '').replace(/'/g, "\\'")}')"
+                    <button class="btn btn-outline-danger delete-product-btn" 
+                            data-product-id="${product.id}"
+                            data-product-name="${(product.name || '').replace(/"/g, '&quot;')}"
                             data-bs-toggle="tooltip" 
                             title="Delete Product">
                         <i class="bi bi-trash"></i>
@@ -542,6 +543,39 @@ function renderProductsTable() {
     
     // Update category filter options
     updateCategoryFilter();
+    
+    // Attach event listeners to edit and delete buttons
+    attachActionButtonListeners();
+}
+
+// Attach event listeners to action buttons
+function attachActionButtonListeners() {
+    // Edit buttons
+    document.querySelectorAll('.edit-product-btn').forEach(btn => {
+        // Remove existing listeners by cloning
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+        newBtn.addEventListener('click', (e) => {
+            const productId = e.currentTarget.dataset.productId;
+            if (productId) {
+                editProduct(productId);
+            }
+        });
+    });
+    
+    // Delete buttons
+    document.querySelectorAll('.delete-product-btn').forEach(btn => {
+        // Remove existing listeners by cloning
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+        newBtn.addEventListener('click', (e) => {
+            const productId = e.currentTarget.dataset.productId;
+            const productName = e.currentTarget.dataset.productName;
+            if (productId) {
+                confirmDelete(productId, productName);
+            }
+        });
+    });
 }
 
 // Update category filter dropdown
@@ -577,37 +611,149 @@ function confirmDelete(productId, productName) {
 // Delete a product
 async function deleteProduct(productId) {
     try {
-        await products.delete(productId);
-        await loadProducts(); // Refresh the product list
-        showToast('Product deleted successfully', 'success');
+        // Get product data before deletion for undo
+        const product = await products.getById(productId);
+        
+        // Delete the product
+        const result = await products.delete(productId);
+        
+        if (result && result.success) {
+            // Save to undo/redo history
+            if (window.globalUndoRedo && product) {
+                window.globalUndoRedo.saveAction({
+                    type: 'delete-product',
+                    description: `Deleted product: ${product.name || productId}`,
+                    productData: product,
+                    productId: productId,
+                    undo: async () => {
+                        // Restore the product
+                        if (product) {
+                            await products.create(product);
+                            await loadProducts();
+                            if (typeof window.refreshDashboard === 'function') {
+                                window.refreshDashboard(true);
+                            }
+                        }
+                    },
+                    redo: async () => {
+                        // Delete again
+                        await products.delete(productId);
+                        await loadProducts();
+                        if (typeof window.refreshDashboard === 'function') {
+                            window.refreshDashboard(true);
+                        }
+                    }
+                });
+            }
+            
+            await loadProducts(); // Refresh the product list
+            if (typeof window.refreshDashboard === 'function') {
+                window.refreshDashboard(true);
+            }
+            showToast('Product deleted successfully', 'success');
+        } else {
+            throw new Error(result?.error || 'Delete failed');
+        }
     } catch (error) {
         console.error('Error deleting product:', error);
-        showToast('Failed to delete product', 'danger');
+        showToast('Failed to delete product: ' + (error.message || 'Unknown error'), 'danger');
     }
 }
 
 // Edit a product - navigate to product form page with product ID
-function editProduct(productId) {
+async function editProduct(productId) {
+    if (!productId) {
+        showToast('Product ID is missing', 'danger');
+        return;
+    }
+    
     try {
-        // Navigate to product form page with the product ID as a query parameter
-        if (window.navigateTo) {
-            window.navigateTo('product-form');
-            // Set the product ID in the URL or use a global variable
+        console.log('Editing product with ID:', productId);
+        
+        // Navigate to product form page first
+        let navigated = false;
+        
+        if (typeof window.navigateTo === 'function') {
+            try {
+                await window.navigateTo('product-form');
+                navigated = true;
+                console.log('Navigated to product-form via window.navigateTo');
+            } catch (e) {
+                console.warn('Navigation via window.navigateTo failed:', e);
+            }
+        }
+        
+        if (!navigated && window.app && typeof window.app.navigateTo === 'function') {
+            try {
+                await window.app.navigateTo('product-form');
+                navigated = true;
+                console.log('Navigated to product-form via window.app.navigateTo');
+            } catch (e) {
+                console.warn('Navigation via window.app.navigateTo failed:', e);
+            }
+        }
+        
+        if (!navigated) {
+            // Fallback: use hash navigation
+            window.location.hash = '#product-form';
+            // Also try direct page switching
+            const productFormPage = document.getElementById('product-form-page');
+            const productsPage = document.getElementById('products-page');
+            if (productFormPage && productsPage) {
+                productsPage.classList.remove('active');
+                productFormPage.classList.add('active');
+                
+                // Update navigation active state
+                document.querySelectorAll('.nav-item').forEach(item => {
+                    item.classList.remove('active');
+                    if (item.getAttribute('data-page') === 'product-form') {
+                        item.classList.add('active');
+                    }
+                });
+            }
+        }
+        
+        // Set the product ID in the URL
+        try {
             const url = new URL(window.location.href);
             url.searchParams.set('id', productId);
             window.history.pushState({}, '', url);
-            
-            // Trigger the form to load the product
-            setTimeout(() => {
-                const event = new CustomEvent('product-edit', { detail: { productId } });
-                window.dispatchEvent(event);
-            }, 100);
-        } else if (window.app && window.app.navigateTo) {
-            window.app.navigateTo('product-form', { id: productId });
-        } else {
-            // Fallback: navigate using window.location
-            window.location.hash = `product-form?id=${productId}`;
+        } catch (e) {
+            // If URL manipulation fails, use hash
+            window.location.hash = `#product-form?id=${productId}`;
         }
+        
+        // Wait a bit for the page to be visible, then load the product
+        setTimeout(async () => {
+            try {
+                // Check if loadProductForEditing is available
+                if (typeof window.loadProductForEditing === 'function') {
+                    await window.loadProductForEditing(productId);
+                } else {
+                    // Dispatch event for product form to listen to
+                    const event = new CustomEvent('product-edit', { 
+                        detail: { productId },
+                        bubbles: true
+                    });
+                    window.dispatchEvent(event);
+                    
+                    // Also try calling it directly if the form module is loaded
+                    const productFormPage = document.getElementById('product-form-page');
+                    if (productFormPage && productFormPage.classList.contains('active')) {
+                        // Try to trigger the load function
+                        setTimeout(() => {
+                            if (typeof window.loadProductForEditing === 'function') {
+                                window.loadProductForEditing(productId);
+                            }
+                        }, 200);
+                    }
+                }
+            } catch (loadError) {
+                console.error('Error loading product for editing:', loadError);
+                showToast('Failed to load product data', 'danger');
+            }
+        }, 300);
+        
     } catch (error) {
         console.error('Error navigating to edit product:', error);
         showToast('Failed to open edit form', 'danger');
@@ -684,5 +830,6 @@ window.exportToExcel = exportToExcel;
 window.editProduct = editProduct;
 window.confirmDelete = confirmDelete;
 window.deleteProduct = deleteProduct;
+window.attachActionButtonListeners = attachActionButtonListeners;
 
 // Remove duplicate initialization - already handled by initializeProductsPage()

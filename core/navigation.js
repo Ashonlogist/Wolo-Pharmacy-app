@@ -141,7 +141,7 @@ async function navigateTo(pageName, data = {}) {
                 switch(actualPageName) {
                     case 'dashboard':
                         if (typeof window.refreshDashboard === 'function') {
-                            window.refreshDashboard();
+                            window.refreshDashboard(false); // Use cache if available when navigating
                         }
                         break;
                     case 'products':

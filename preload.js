@@ -10,12 +10,12 @@ contextBridge.exposeInMainWorld('electron', {
         'save-product', 'add-product', 'get-products', 'get-product', 'delete-product',
         'record-sale', 'export-data', 'save-settings', 'set-setting', 'send-email',
         'show-save-dialog', 'show-open-dialog', 'print-receipt', 'export-to-excel',
-        'get-sales-by-date-range', 'get-sales-history', 'data-updated'
+        'get-sales-by-date-range', 'get-sales-history', 'data-updated', 'splash-complete'
       ];
       if (validChannels.includes(channel)) ipcRenderer.send(channel, data);
     },
     on: (channel, func) => {
-      const validChannels = ['data-updated', 'printers-updated', 'print-complete', 'ipc-handlers-ready', 'developer-mode-changed'];
+      const validChannels = ['data-updated', 'printers-updated', 'print-complete', 'ipc-handlers-ready', 'developer-mode-changed', 'app-ready'];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, (event, ...args) => func(...args));
       }
@@ -24,14 +24,14 @@ contextBridge.exposeInMainWorld('electron', {
       try {
         // Whitelist channels for request/response
         const validChannels = [
-          'get-products', 'get-product', 'add-product', 'update-product', 'delete-product',
+          'get-products', 'get-product', 'add-product', 'update-product', 'delete-product', 'import-products',
           'get-sales-by-date-range', 'get-sales-history', 'record-sale', 'export-to-excel',
           'export-sales-excel', 'get-setting', 'set-setting', 'get-all-product-names', 'check-duplicate-product',
           'get-suppliers', 'create-supplier', 'update-supplier', 'delete-supplier',
           'get-low-stock-items', 'get-expiring-items', 'get-categories',
           'create-category', 'update-category', 'delete-category',
           'create-backup', 'restore-backup', 'check-for-updates', 'install-update', 'get-app-version',
-          'developer-mode-changed', 'fs-read-file', 'fs-write-file', 'fs-exists-sync',
+          'reset-all-data', 'developer-mode-changed', 'fs-read-file', 'fs-write-file', 'fs-exists-sync',
           'path-join', 'path-basename', 'path-dirname', 'path-extname',
           'os-homedir', 'os-tmpdir', 'show-save-dialog', 'show-open-dialog',
           'show-message-box', 'get-printers', 'print-receipt'

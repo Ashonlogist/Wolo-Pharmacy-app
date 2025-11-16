@@ -786,20 +786,49 @@ function updateSummaryCards(stats = {}) {
             totalExpiringSoon = 0
         } = stats;
         
-        // Update summary cards if they exist
+        // Scope to reports page only - don't update dashboard elements
+        const reportsPage = document.getElementById('reports-page');
+        if (!reportsPage) {
+            console.warn('Reports page not found, cannot update summary cards');
+            return;
+        }
+        
+        // Update summary cards if they exist within the reports page only
         const updateIfExists = (id, value, isCurrency = false) => {
-            const element = document.getElementById(id);
+            // First try to find within reports page
+            const element = reportsPage.querySelector(`#${id}`);
+            // If not found in reports page, try document-wide (for backward compatibility)
+            // but only if it's a report-specific element (not dashboard elements)
+            const elementToUpdate = element || (id.startsWith('report') ? document.getElementById(id) : null);
+            if (elementToUpdate) {
+                elementToUpdate.textContent = isCurrency ? `GH₵ ${parseFloat(value || 0).toFixed(2)}` : (value || 0);
+            }
+        };
+        
+        // Only update report-specific summary cards, not dashboard elements
+        // Use report-specific IDs to avoid conflicts
+        updateIfExists('reportTotalProducts', totalProducts);
+        updateIfExists('reportTotalInStock', totalInStock);
+        updateIfExists('reportTotalLowStock', totalLowStock);
+        updateIfExists('reportTotalOutOfStock', totalOutOfStock);
+        updateIfExists('reportTotalSales', totalSales, true);
+        updateIfExists('reportTotalInventoryValue', totalValue, true);
+        
+        // Also update generic IDs if they exist within reports page only (for backward compatibility)
+        const updateInReportsPage = (id, value, isCurrency = false) => {
+            const element = reportsPage.querySelector(`#${id}`);
             if (element) {
                 element.textContent = isCurrency ? `GH₵ ${parseFloat(value || 0).toFixed(2)}` : (value || 0);
             }
         };
         
-        updateIfExists('totalProducts', totalProducts);
-        updateIfExists('totalInStock', totalInStock);
-        updateIfExists('totalLowStock', totalLowStock);
-        updateIfExists('totalOutOfStock', totalOutOfStock);
-        updateIfExists('totalSales', totalSales, true);
-        updateIfExists('totalInventoryValue', totalValue, true);
+        // Update generic IDs only within reports page scope
+        updateInReportsPage('totalProducts', totalProducts);
+        updateInReportsPage('totalInStock', totalInStock);
+        updateInReportsPage('totalLowStock', totalLowStock);
+        updateInReportsPage('totalOutOfStock', totalOutOfStock);
+        updateInReportsPage('totalSales', totalSales, true);
+        updateInReportsPage('totalInventoryValue', totalValue, true);
         
         // Show/hide summary section based on available data
         const summarySection = document.getElementById('reportSummary');

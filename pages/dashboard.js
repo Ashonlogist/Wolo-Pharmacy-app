@@ -180,7 +180,7 @@ function initializeEventListeners() {
 
 
 // Refresh dashboard data with cache and error handling
-async function refreshDashboard() {
+async function refreshDashboard(forceRefresh = false) {
     const loadingKey = 'dashboard-refresh';
     showLoading(true, loadingKey);
     
@@ -189,11 +189,17 @@ async function refreshDashboard() {
         const startDate = document.getElementById('startDate')?.value;
         const endDate = document.getElementById('endDate')?.value;
         
-        // Check cache first if available
-        if (isCacheValid()) {
+        // Check cache first if available (unless force refresh is requested)
+        if (!forceRefresh && isCacheValid()) {
             updateUI(cache.sales, cache.products, cache.summary);
             updateCharts(cache.sales, cache.products);
+            showLoading(false, loadingKey);
             return;
+        }
+        
+        // Clear cache if force refresh
+        if (forceRefresh) {
+            cache.lastUpdated = null;
         }
         
         // Fetch fresh data
@@ -676,6 +682,14 @@ function updateProductSummary(apiResponse) {
             return quantity > 0 && quantity <= reorderLevel;
         }).length;
         
+        // Calculate out of stock items (quantityInStock === 0)
+        const outOfStockItems = products.filter(p => {
+            // Try both snake_case and camelCase field names for compatibility
+            const quantity = parseFloat(p.quantityInStock || p.quantity_in_stock || 0);
+            return quantity === 0;
+        });
+        const outOfStockCount = outOfStockItems.length;
+        
         // Calculate total inventory value (quantityInStock * costPrice)
         const totalValue = products.reduce((sum, product) => {
             // Try both snake_case and camelCase field names for compatibility
@@ -735,6 +749,7 @@ function updateProductSummary(apiResponse) {
             totalProducts,
             lowStockItems,
             expiringCount,
+            outOfStockCount,
             totalValue: formatCurrency(totalValue),
             sampleProduct: products[0] ? {
                 id: products[0].id,
@@ -749,11 +764,13 @@ function updateProductSummary(apiResponse) {
         const totalProductsEl = document.getElementById('totalProducts');
         const lowStockCountEl = document.getElementById('lowStockCount');
         const expiringSoonCountEl = document.getElementById('expiringSoonCount');
+        const outOfStockCountEl = document.getElementById('outOfStockCount');
         const totalValueEl = document.getElementById('totalValue');
         
         if (totalProductsEl) totalProductsEl.textContent = totalProducts.toLocaleString();
         if (lowStockCountEl) lowStockCountEl.textContent = lowStockItems.toLocaleString();
         if (expiringSoonCountEl) expiringSoonCountEl.textContent = expiringCount.toLocaleString();
+        if (outOfStockCountEl) outOfStockCountEl.textContent = outOfStockCount.toLocaleString();
         if (totalValueEl) {
             totalValueEl.textContent = formatCurrency(totalValue);
             console.log('Updated total inventory value:', formatCurrency(totalValue));
@@ -765,10 +782,14 @@ function updateProductSummary(apiResponse) {
         // Update expiring items list
         updateExpiringList(expiringItems);
         
+        // Update out of stock list
+        updateOutOfStockList(outOfStockItems);
+        
         // Force a reflow to ensure UI updates
         if (totalProductsEl) void totalProductsEl.offsetHeight;
         if (lowStockCountEl) void lowStockCountEl.offsetHeight;
         if (expiringSoonCountEl) void expiringSoonCountEl.offsetHeight;
+        if (outOfStockCountEl) void outOfStockCountEl.offsetHeight;
         if (totalValueEl) void totalValueEl.offsetHeight;
         
     } catch (error) {
@@ -776,12 +797,14 @@ function updateProductSummary(apiResponse) {
         // Update UI with zeros on error
         const totalProductsEl = document.getElementById('totalProducts');
         const lowStockCountEl = document.getElementById('lowStockCount');
+        const outOfStockCountEl = document.getElementById('outOfStockCount');
         const totalValueEl = document.getElementById('totalValue');
         
         if (totalProductsEl) totalProductsEl.textContent = '0';
         if (lowStockCountEl) lowStockCountEl.textContent = '0';
         const expiringSoonCountEl = document.getElementById('expiringSoonCount');
         if (expiringSoonCountEl) expiringSoonCountEl.textContent = '0';
+        if (outOfStockCountEl) outOfStockCountEl.textContent = '0';
         if (totalValueEl) totalValueEl.textContent = formatCurrency(0);
     }
 }
@@ -859,6 +882,41 @@ function updateExpiringList(expiringItems) {
             <div class="alert alert-${alertClass} alert-dismissible fade show mb-2" role="alert">
                 <strong>${item.name || 'Unknown Product'}</strong><br>
                 <small>Expires: ${expiry.toLocaleDateString()} (${daysUntilExpiry} days)</small>
+            </div>
+        `;
+    }).join('');
+}
+
+// Update out of stock items list
+function updateOutOfStockList(outOfStockItems) {
+    const outOfStockListEl = document.getElementById('outOfStockList');
+    if (!outOfStockListEl) return;
+    
+    if (outOfStockItems.length === 0) {
+        outOfStockListEl.innerHTML = '<div class="alert alert-success mb-0">All products are in stock</div>';
+        return;
+    }
+    
+    // Sort by name and take top 10
+    const sortedItems = outOfStockItems
+        .sort((a, b) => {
+            const nameA = (a.name || '').toLowerCase();
+            const nameB = (b.name || '').toLowerCase();
+            return nameA.localeCompare(nameB);
+        })
+        .slice(0, 10);
+    
+    outOfStockListEl.innerHTML = sortedItems.map(item => {
+        const category = item.category || item.productCategory || 'Uncategorized';
+        const sellingPrice = parseFloat(item.selling_price || item.sellingPrice || 0);
+        
+        return `
+            <div class="alert alert-danger alert-dismissible fade show mb-2" role="alert">
+                <strong>${item.name || 'Unknown Product'}</strong><br>
+                <small>
+                    Category: ${category}
+                    ${sellingPrice > 0 ? ` | Price: ${formatCurrency(sellingPrice)}` : ''}
+                </small>
             </div>
         `;
     }).join('');
