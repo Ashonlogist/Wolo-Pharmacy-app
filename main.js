@@ -1,3 +1,8 @@
+// Set production environment
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = process.defaultApp ? 'development' : 'production';
+}
+
 // Import Electron and other modules
 const electron = require('electron');
 const { app, BrowserWindow, ipcMain, dialog, session } = electron;
@@ -12,6 +17,9 @@ const { v4: uuidv4 } = require('uuid');
 let mainWindow = null;
 let db = null;
 let cachePath = null;
+
+// Production optimizations
+const isDev = process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true';
 
 // IPC handlers will be registered after database initialization
 let ipcHandlersInitialized = false;
@@ -1936,7 +1944,7 @@ function createWindow() {
         mainWindow.focus();
         
         // Open DevTools in development mode
-        if (process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true') {
+        if (isDev) {
           mainWindow.webContents.openDevTools({ mode: 'detach' });
         }
       }

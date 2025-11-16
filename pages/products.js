@@ -75,7 +75,15 @@ function setupEventListeners() {
     if (exportExcelBtn) {
         exportExcelBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            exportToExcel();
+            // Play export sound
+        if (window.soundManager) {
+            try {
+                window.soundManager.playExport();
+            } catch (error) {
+                // Ignore sound errors
+            }
+        }
+        exportToExcel();
         });
     }
     
@@ -618,6 +626,15 @@ async function deleteProduct(productId) {
         const result = await products.delete(productId);
         
         if (result && result.success) {
+            // Play delete sound
+            if (window.soundManager) {
+                try {
+                    window.soundManager.playDelete();
+                } catch (error) {
+                    // Ignore sound errors
+                }
+            }
+            
             // Save to undo/redo history
             if (window.globalUndoRedo && product) {
                 window.globalUndoRedo.saveAction({

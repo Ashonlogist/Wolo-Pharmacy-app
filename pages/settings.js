@@ -271,6 +271,31 @@ async function setupEventListeners() {
         saveUserNameBtn.addEventListener('click', saveUserName);
     }
     
+    // Sound settings
+    const soundEnabled = document.getElementById('soundEnabled');
+    const soundVolume = document.getElementById('soundVolume');
+    const soundVolumeValue = document.getElementById('soundVolumeValue');
+    const saveSoundSettingsBtn = document.getElementById('saveSoundSettingsBtn');
+    const testSoundBtn = document.getElementById('testSoundBtn');
+    
+    if (soundVolume && soundVolumeValue) {
+        soundVolume.addEventListener('input', (e) => {
+            soundVolumeValue.textContent = `${e.target.value}%`;
+        });
+    }
+    
+    if (saveSoundSettingsBtn) {
+        saveSoundSettingsBtn.addEventListener('click', saveSoundSettings);
+    }
+    
+    if (testSoundBtn) {
+        testSoundBtn.addEventListener('click', () => {
+            if (window.soundManager) {
+                window.soundManager.playSuccess();
+            }
+        });
+    }
+    
     // Reset all data button and checkbox
     const resetBtn = document.getElementById('resetAllDataBtn');
     const confirmCheckbox = document.getElementById('confirmResetCheckbox');
@@ -314,6 +339,8 @@ async function loadSettings() {
         const keys = [
             'user_name',
             'developer_mode',
+            'sound_enabled',
+            'sound_volume',
             'company_name',
             'company_address',
             'company_phone',
@@ -367,6 +394,33 @@ async function loadSettings() {
             const themeToggle = document.getElementById('themeToggle');
             if (themeToggle) {
                 themeToggle.checked = themeSetting.value === 'dark';
+            }
+        }
+        
+        // Handle sound settings
+        const soundEnabledSetting = values.find(item => item.key === 'sound_enabled');
+        const soundVolumeSetting = values.find(item => item.key === 'sound_volume');
+        if (soundEnabledSetting?.success) {
+            const soundEnabled = document.getElementById('soundEnabled');
+            if (soundEnabled) {
+                soundEnabled.checked = soundEnabledSetting.value === 'true' || soundEnabledSetting.value === '';
+            }
+            if (window.soundManager) {
+                window.soundManager.enabled = soundEnabledSetting.value === 'true' || soundEnabledSetting.value === '';
+            }
+        }
+        if (soundVolumeSetting?.success) {
+            const soundVolume = document.getElementById('soundVolume');
+            const soundVolumeValue = document.getElementById('soundVolumeValue');
+            const volume = soundVolumeSetting.value || '70';
+            if (soundVolume) {
+                soundVolume.value = volume;
+            }
+            if (soundVolumeValue) {
+                soundVolumeValue.textContent = `${volume}%`;
+            }
+            if (window.soundManager) {
+                window.soundManager.setVolume(parseFloat(volume) / 100);
             }
         }
 
@@ -882,6 +936,27 @@ async function saveSecuritySettings() {
 }
 
 // Save user name
+async function saveSoundSettings() {
+    try {
+        const soundEnabled = document.getElementById('soundEnabled')?.checked ?? true;
+        const soundVolume = document.getElementById('soundVolume')?.value ?? 70;
+        
+        await settings.save('sound_enabled', soundEnabled.toString());
+        await settings.save('sound_volume', soundVolume);
+        
+        // Update sound manager
+        if (window.soundManager) {
+            window.soundManager.enabled = soundEnabled;
+            window.soundManager.setVolume(parseFloat(soundVolume) / 100);
+        }
+        
+        showToast('Sound settings saved successfully', 'success');
+    } catch (error) {
+        console.error('Error saving sound settings:', error);
+        showToast('Failed to save sound settings', 'danger');
+    }
+}
+
 async function saveUserName() {
     const userNameInput = document.getElementById('userNameSetting');
     if (!userNameInput) return;
@@ -992,6 +1067,7 @@ window.toggleTheme = toggleTheme;
 window.saveSettings = saveSettings;
 window.saveSmtpSettings = saveSmtpSettings;
 window.saveSecuritySettings = saveSecuritySettings;
+window.saveSoundSettings = saveSoundSettings;
 window.saveUserName = saveUserName;
 window.resetAllData = resetAllData;
 window.getUserName = getUserName;

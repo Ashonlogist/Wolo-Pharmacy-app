@@ -103,8 +103,9 @@ function loadCoreModules() {
                 import('./core/state.js'),
                 import('./core/events.js'),
                 import('./core/utils.js'),
-                import('./core/api.js')
-            ]).then(([navModule, stateModule, eventsModule, utilsModule, apiModule]) => {
+                import('./core/api.js'),
+                import('./core/sounds.js')
+            ]).then(([navModule, stateModule, eventsModule, utilsModule, apiModule, soundsModule]) => {
                 setupNavigation = navModule.setupNavigation;
                 navigateTo = navModule.navigateTo;
                 state = stateModule.state;
@@ -116,6 +117,13 @@ function loadCoreModules() {
                 reports = apiModule.reports || {};
                 settings = apiModule.settings || {};
                 system = apiModule.system || {};
+                
+                // Initialize sound manager
+                if (soundsModule && soundsModule.default) {
+                    window.soundManager = soundsModule.default;
+                    console.log('Sound manager initialized');
+                }
+                
                 resolve();
             }).catch(error => {
                 console.error('Error loading core modules:', error);
@@ -1139,6 +1147,15 @@ function initializeDragAndDrop() {
         }
         
         try {
+            // Play import sound
+            if (window.soundManager) {
+                try {
+                    window.soundManager.playImport();
+                } catch (error) {
+                    // Ignore sound errors
+                }
+            }
+            
             const result = await importProducts(files[0]);
             
             // Save to undo/redo history

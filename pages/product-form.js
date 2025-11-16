@@ -663,6 +663,15 @@ async function handleFormSubmit(event) {
                 if (result.data.barcode) document.getElementById('barcode').value = result.data.barcode;
             }
             
+            // Play save sound
+            if (window.soundManager) {
+                try {
+                    window.soundManager.playSave();
+                } catch (error) {
+                    // Ignore sound errors
+                }
+            }
+            
             // After successful save - handle navigation and refresh
             if (isEdit) {
                 // For updates, show success message and reload the product

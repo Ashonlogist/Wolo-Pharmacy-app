@@ -419,6 +419,15 @@ async function completeSale() {
         
         console.log('Completing sale with items:', saleItems);
         
+        // Play notification sound before completing sale
+        if (window.soundManager) {
+            try {
+                window.soundManager.playNotification();
+            } catch (error) {
+                // Ignore sound errors
+            }
+        }
+        
         const result = await sales.create({
             items: saleItems,
             paymentMethod,

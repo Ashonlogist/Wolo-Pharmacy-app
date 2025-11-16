@@ -8,12 +8,24 @@
     "email": "aaronashong111@gmail.com"
   },
   "license": "MIT",
+  "homepage": "./",
   "scripts": {
     "start": "cross-env NODE_ENV=development electron .",
     "dev": "cross-env NODE_ENV=development DEBUG_PROD=true electron .",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "electron-builder",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --win --mac --linux",
+    "build:win:portable": "electron-builder --win portable",
+    "build:win:installer": "electron-builder --win nsis",
+    "dist": "npm run build",
+    "pack": "electron-builder --dir",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "prebuild": "npm run clean && node build/build-optimize.js",
+    "clean": "rimraf dist",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
     "better-sqlite3": "^9.2.2",
@@ -25,26 +37,113 @@
     "uuid": "^8.3.2"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
     "cross-env": "^10.1.0",
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
-    "@electron/rebuild": "^3.6.0"
+    "rimraf": "^5.0.10"
   },
   "build": {
     "appId": "com.wolo-pharmacy.app",
-    "win": {
-      "target": "nsis",
-      "icon": "WOLO-PHARMACY.ico"
+    "productName": "Wolo Pharmacy",
+    "copyright": "Copyright © 2024 Ashong Aaron Nii Nortey",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
+    "files": [
+      "**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}",
+      "!*.{md,txt,log}",
+      "!*.config.js",
+      "!check-db.js",
+      "!fix-db.js",
+      "!repair-db.js",
+      "!run-repair.js",
+      "!pages/reports.js.bak"
+    ],
     "extraResources": [
       {
         "from": "WOLO-PHARMACY.ico",
         "to": "WOLO-PHARMACY.ico"
       }
-    ]
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "ia32"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "WOLO-PHARMACY.ico",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "publisherName": "Ashong Aaron Nii Nortey"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "installerIcon": "WOLO-PHARMACY.ico",
+      "uninstallerIcon": "WOLO-PHARMACY.ico",
+      "installerHeaderIcon": "WOLO-PHARMACY.ico",
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Wolo Pharmacy",
+      "menuCategory": "Wolo Pharmacy",
+      "include": "build/installer-custom.nsh",
+      "warningsAsErrors": false,
+      "artifactName": "${productName}-${version}-Setup.${ext}",
+      "installerLanguages": ["en_US"],
+      "multiLanguageInstaller": false,
+      "displayLanguageSelector": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "WOLO-PHARMACY.png",
+      "category": "public.app-category.business",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "icon": "WOLO-PHARMACY.png",
+      "category": "Office",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "compression": "maximum",
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
+    ],
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false
   }
 }

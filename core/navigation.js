@@ -119,6 +119,15 @@ async function navigateTo(pageName, data = {}) {
             targetPage.classList.add('active');
             console.log(`Successfully navigated to ${actualPageName}`);
             
+            // Play page transition sound
+            if (window.soundManager && currentPage !== actualPageName) {
+                try {
+                    window.soundManager.playPageTransition();
+                } catch (error) {
+                    // Ignore sound errors
+                }
+            }
+            
             // Update URL if we're not handling a hash change
             if (window.location.hash !== `#${actualPageName}`) {
                 window.history.pushState({ page: actualPageName }, '', `#${actualPageName}`);

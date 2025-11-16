@@ -4,9 +4,35 @@ const events = new Map();
 
 // Initialize event system
 function initEvents() {
-    // Set up global event listeners
-    document.addEventListener('click', handleGlobalClick);
-    document.addEventListener('keydown', handleGlobalKeyDown);
+    // Set up global event listeners with sound effects
+    document.addEventListener('click', (e) => {
+        handleGlobalClick(e);
+        // Play click sound for buttons
+        if (e.target.closest('button, .btn, [role="button"]') && window.soundManager) {
+            try {
+                window.soundManager.playClick();
+            } catch (error) {
+                // Ignore sound errors
+            }
+        }
+    });
+    
+    // Debounced search sound to avoid playing on every keystroke
+    let searchSoundTimeout = null;
+    document.addEventListener('keydown', (e) => {
+        handleGlobalKeyDown(e);
+        // Play search sound when typing in search inputs (debounced)
+        if (e.target.matches('input[type="search"], #searchInput') && window.soundManager) {
+            clearTimeout(searchSoundTimeout);
+            searchSoundTimeout = setTimeout(() => {
+                try {
+                    window.soundManager.playSearch();
+                } catch (error) {
+                    // Ignore sound errors
+                }
+            }, 500); // Only play after 500ms of no typing
+        }
+    });
     
     // Listen for IPC messages
     if (window.electron && window.electron.ipcRenderer) {

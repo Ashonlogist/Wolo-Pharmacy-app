@@ -34,8 +34,32 @@ function formatDate(date, format = 'medium') {
     return date.toLocaleString(undefined, options);
 }
 
-// Show toast notification
+// Show toast notification with sound
 function showToast(message, type = 'info', duration = 3000) {
+    // Play sound based on toast type
+    if (window.soundManager) {
+        try {
+            switch(type) {
+                case 'success':
+                    window.soundManager.playSuccess();
+                    break;
+                case 'danger':
+                case 'error':
+                    window.soundManager.playError();
+                    break;
+                case 'warning':
+                    window.soundManager.playWarning();
+                    break;
+                case 'info':
+                default:
+                    window.soundManager.playInfo();
+                    break;
+            }
+        } catch (error) {
+            console.warn('Error playing toast sound:', error);
+        }
+    }
+    
     const toastContainer = document.getElementById('toast-container') || createToastContainer();
     const toast = document.createElement('div');
     
