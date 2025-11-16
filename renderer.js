@@ -256,8 +256,16 @@ async function initApp() {
         // Hide splash screen and show main content
         hideSplashScreen();
         
-        // Check if user name is set, show welcome modal if not
-        await checkAndShowWelcomeModal();
+        // Check if installation wizard should be shown (first-time setup)
+        await checkAndShowInstallationWizard();
+        
+        // If wizard is not shown, check if user name is set, show welcome modal if not
+        // (This handles cases where setup is complete but user name might be missing)
+        const { settings } = await import('./core/api.js');
+        const setupComplete = await settings.get('setup_complete');
+        if (setupComplete && setupComplete.value === 'true') {
+            await checkAndShowWelcomeModal();
+        }
         
         // Navigate to the current page or dashboard
         const currentPage = window.location.hash.substring(1) || 'dashboard';
@@ -364,9 +372,6 @@ function initSplashScreen() {
 }
 
 // Check if user name is set and show welcome modal if not
-// Track if welcome modal handler is already set up
-let welcomeModalHandlerSetup = false;
-
 async function checkAndShowWelcomeModal() {
     try {
         // Import settings API
@@ -378,26 +383,12 @@ async function checkAndShowWelcomeModal() {
         
         if (!userName || userName.trim() === '') {
             // Show welcome modal
-            const welcomeModalElement = document.getElementById('welcomeModal');
-            if (!welcomeModalElement) {
-                console.warn('Welcome modal element not found');
-                return;
-            }
-            
-            // Get or create modal instance
-            let welcomeModal = bootstrap.Modal.getInstance(welcomeModalElement);
-            if (!welcomeModal) {
-                welcomeModal = new bootstrap.Modal(welcomeModalElement);
-            }
-            
+            const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
             welcomeModal.show();
             
-            // Set up form submission (only once)
+            // Set up form submission
             const welcomeForm = document.getElementById('welcomeForm');
-            if (welcomeForm && !welcomeModalHandlerSetup) {
-                welcomeModalHandlerSetup = true;
-                
-                // Add listener (removeEventListener won't work with anonymous functions, but we check the flag)
+            if (welcomeForm) {
                 welcomeForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const userNameInput = document.getElementById('userNameInput');
@@ -407,20 +398,7 @@ async function checkAndShowWelcomeModal() {
                         try {
                             const result = await settings.save('user_name', userName);
                             if (result?.success) {
-                                // Hide and dispose modal properly
-                                const modalInstance = bootstrap.Modal.getInstance(welcomeModalElement);
-                                if (modalInstance) {
-                                    modalInstance.hide();
-                                    // Wait for hide animation, then dispose
-                                    setTimeout(() => {
-                                        modalInstance.dispose();
-                                    }, 300);
-                                } else {
-                                    // Fallback: hide using jQuery/Bootstrap directly
-                                    const modal = bootstrap.Modal.getInstance(welcomeModalElement) || new bootstrap.Modal(welcomeModalElement);
-                                    modal.hide();
-                                }
-                                
+                                welcomeModal.hide();
                                 // Show personalized welcome message
                                 if (typeof showToast === 'function') {
                                     showToast(`Welcome, ${userName}! Let's get started.`, 'success');
@@ -434,8 +412,6 @@ async function checkAndShowWelcomeModal() {
                             console.error('Error saving user name:', error);
                             showToast('Failed to save your name. Please try again.', 'danger');
                         }
-                    } else {
-                        showToast('Please enter your name to continue.', 'warning');
                     }
                 });
             }
@@ -3676,4 +3652,447 @@ async function activateApp(event) {
         errorDiv.textContent = 'An error occurred. Please try again.';
         errorDiv.classList.remove('d-none');
         }
+}
+
+// ============================================
+// Installation Wizard Functions
+// ============================================
+
+let currentWizardStep = 1;
+const totalWizardSteps = 5;
+
+// Check if installation wizard should be shown
+async function checkAndShowInstallationWizard() {
+    try {
+        const { settings } = await import('./core/api.js');
+        
+        // Check if setup is already complete
+        const setupComplete = await settings.get('setup_complete');
+        
+        if (!setupComplete || setupComplete.value !== 'true') {
+            // Show installation wizard
+            showInstallationWizard();
+        }
+    } catch (error) {
+        console.error('Error checking installation wizard:', error);
+    }
+}
+
+// Show installation wizard
+function showInstallationWizard() {
+    const wizardModal = new bootstrap.Modal(document.getElementById('installationWizardModal'), {
+        backdrop: 'static',
+        keyboard: false
+    });
+    wizardModal.show();
+    
+    // Initialize wizard
+    currentWizardStep = 1;
+    updateWizardStep();
+}
+
+// Update wizard step display with animations
+function updateWizardStep() {
+    // Hide all steps with fade out animation
+    for (let i = 1; i <= totalWizardSteps; i++) {
+        const step = document.getElementById(`wizardStep${i}`);
+        if (step && !step.classList.contains('d-none')) {
+            // Add fade out animation
+            step.style.animation = 'stepFadeOut 0.3s ease-in';
+            setTimeout(() => {
+                step.classList.add('d-none');
+                step.style.animation = '';
+            }, 300);
+        } else if (step) {
+            step.classList.add('d-none');
+        }
+    }
+    
+    // Show current step with animation after a short delay
+    setTimeout(() => {
+        const currentStep = document.getElementById(`wizardStep${currentWizardStep}`);
+        if (currentStep) {
+            currentStep.classList.remove('d-none');
+            // Trigger reflow to restart animation
+            currentStep.offsetHeight;
+            currentStep.style.animation = 'stepFadeInSlide 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
+            
+            // Add special animation for completion step
+            if (currentWizardStep === 5) {
+                setTimeout(() => {
+                    currentStep.style.animation = 'completionCelebration 1s ease-out';
+                }, 100);
+            }
+        }
+    }, 300);
+    
+    // Update progress with smooth animation
+    const progress = (currentWizardStep / totalWizardSteps) * 100;
+    const progressBar = document.getElementById('wizardProgressBar');
+    const progressText = document.getElementById('wizardProgressText');
+    const stepIndicator = document.getElementById('wizardStepIndicator');
+    
+    if (progressBar) {
+        // Animate progress bar
+        progressBar.style.transition = 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)';
+        progressBar.style.width = `${progress}%`;
+        
+        // Add celebration effect when reaching 100%
+        if (progress === 100) {
+            progressBar.style.animation = 'progressGradient 3s ease infinite, progressGlow 1.5s infinite';
+        }
+    }
+    if (progressText) {
+        // Animate number change
+        const targetPercent = Math.round(progress);
+        let currentPercent = parseInt(progressText.textContent) || 0;
+        const increment = targetPercent > currentPercent ? 1 : -1;
+        const interval = setInterval(() => {
+            currentPercent += increment;
+            progressText.textContent = `${currentPercent}%`;
+            if (currentPercent === targetPercent) {
+                clearInterval(interval);
+            }
+        }, 20);
+    }
+    if (stepIndicator) {
+        // Animate step indicator
+        stepIndicator.style.animation = 'stepIndicatorPulse 0.5s ease-out';
+        stepIndicator.textContent = `Step ${currentWizardStep} of ${totalWizardSteps}`;
+        setTimeout(() => {
+            stepIndicator.style.animation = 'stepIndicatorPulse 2s ease-in-out infinite';
+        }, 500);
+    }
+    
+    // Update buttons with animations
+    const backBtn = document.getElementById('wizardBackBtn');
+    const nextBtn = document.getElementById('wizardNextBtn');
+    const skipBtn = document.getElementById('wizardSkipBtn');
+    const finishBtn = document.getElementById('wizardFinishBtn');
+    
+    if (backBtn) {
+        const shouldShow = currentWizardStep > 1;
+        if (shouldShow && backBtn.style.display === 'none') {
+            backBtn.style.display = 'inline-block';
+            backBtn.style.animation = 'buttonFadeIn 0.4s ease-out';
+        } else if (!shouldShow) {
+            backBtn.style.display = 'none';
+        }
+    }
+    if (nextBtn) {
+        // Hide Next button on Step 4 (finish button will be shown instead)
+        const shouldShow = currentWizardStep < totalWizardSteps && currentWizardStep !== 4;
+        if (shouldShow && nextBtn.style.display === 'none') {
+            nextBtn.style.display = 'inline-block';
+            nextBtn.style.animation = 'buttonFadeIn 0.4s ease-out';
+        } else if (!shouldShow) {
+            nextBtn.style.display = 'none';
+        }
+    }
+    if (skipBtn) {
+        const shouldShow = currentWizardStep === 4;
+        if (shouldShow && skipBtn.style.display === 'none') {
+            skipBtn.style.display = 'inline-block';
+            skipBtn.style.animation = 'buttonFadeIn 0.4s ease-out';
+        } else if (!shouldShow) {
+            skipBtn.style.display = 'none';
+        }
+    }
+    if (finishBtn) {
+        // Show finish button on Step 4 (after password field)
+        const shouldShow = currentWizardStep === 4;
+        if (shouldShow && finishBtn.style.display === 'none') {
+            finishBtn.style.display = 'inline-block';
+            finishBtn.style.animation = 'buttonFadeIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
+            // Add celebration animation
+            setTimeout(() => {
+                finishBtn.style.animation = 'successButtonPulse 0.6s ease-out';
+            }, 600);
+        } else if (!shouldShow) {
+            finishBtn.style.display = 'none';
+        }
+    }
+}
+
+// Handle wizard next button
+async function handleWizardNext() {
+    // Validate current step before proceeding
+    if (!await validateCurrentStep()) {
+        return;
+    }
+    
+    // Save current step data
+    await saveCurrentStepData();
+    
+    if (currentWizardStep < totalWizardSteps) {
+        currentWizardStep++;
+        updateWizardStep();
+        
+        // Focus on first input of new step
+        const currentStep = document.getElementById(`wizardStep${currentWizardStep}`);
+        if (currentStep) {
+            const firstInput = currentStep.querySelector('input, textarea, select');
+            if (firstInput) {
+                setTimeout(() => firstInput.focus(), 100);
+            }
+        }
+    }
+}
+
+// Handle wizard back button
+function handleWizardBack() {
+    if (currentWizardStep > 1) {
+        currentWizardStep--;
+        updateWizardStep();
+        
+        // Focus on first input of new step
+        const currentStep = document.getElementById(`wizardStep${currentWizardStep}`);
+        if (currentStep) {
+            const firstInput = currentStep.querySelector('input, textarea, select');
+            if (firstInput) {
+                setTimeout(() => firstInput.focus(), 100);
+            }
+        }
+    }
+}
+
+// Handle wizard skip button
+async function handleWizardSkip() {
+    if (currentWizardStep === 4) {
+        // Skip SMTP configuration
+        currentWizardStep++;
+        updateWizardStep();
+    }
+}
+
+// Validate current step
+async function validateCurrentStep() {
+    switch (currentWizardStep) {
+        case 1: // Activation
+            const activationPassword = document.getElementById('wizardActivationPassword').value;
+            if (!activationPassword || activationPassword.trim() === '') {
+                showToast('Please enter the activation password', 'warning');
+                return false;
+            }
+            // Validate activation password
+            try {
+                // For now, we'll use a simple check. You can replace this with actual IPC call
+                if (activationPassword === 'Ashinting@1st') {
+                    return true;
+                } else {
+                    const errorDiv = document.getElementById('wizardActivationError');
+                    if (errorDiv) {
+                        errorDiv.textContent = 'Invalid activation password. Please try again.';
+                        errorDiv.classList.remove('d-none');
+                    }
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error validating activation:', error);
+                return false;
+            }
+            
+        case 2: // Shop Information
+            const shopName = document.getElementById('wizardShopName').value;
+            if (!shopName || shopName.trim() === '') {
+                showToast('Please enter your shop/pharmacy name', 'warning');
+                return false;
+            }
+            return true;
+            
+        case 3: // User Information
+            const userName = document.getElementById('wizardUserName').value;
+            if (!userName || userName.trim() === '') {
+                showToast('Please enter your name', 'warning');
+                return false;
+            }
+            return true;
+            
+        case 4: // SMTP (optional, always valid)
+            return true;
+            
+        case 5: // Completion
+            return true;
+            
+        default:
+            return true;
+    }
+}
+
+// Save current step data
+async function saveCurrentStepData() {
+    try {
+        const { settings } = await import('./core/api.js');
+        
+        switch (currentWizardStep) {
+            case 1: // Activation - just mark as activated
+                await settings.save('app_activated', 'true');
+                break;
+                
+            case 2: // Shop Information
+                const shopData = {
+                    shop_name: document.getElementById('wizardShopName').value,
+                    shop_phone: document.getElementById('wizardShopPhone').value,
+                    shop_email: document.getElementById('wizardShopEmail').value,
+                    shop_address: document.getElementById('wizardShopAddress').value
+                };
+                for (const [key, value] of Object.entries(shopData)) {
+                    if (value) {
+                        await settings.save(key, value);
+                    }
+                }
+                break;
+                
+            case 3: // User Information
+                const userName = document.getElementById('wizardUserName').value;
+                const userRole = document.getElementById('wizardUserRole').value;
+                await settings.save('user_name', userName);
+                await settings.save('user_role', userRole);
+                break;
+                
+            case 4: // SMTP Configuration
+                const configureSmtp = document.getElementById('wizardConfigureSmtp').checked;
+                if (configureSmtp) {
+                    const smtpData = {
+                        smtp_host: document.getElementById('wizardSmtpHost').value,
+                        smtp_port: document.getElementById('wizardSmtpPort').value,
+                        smtp_user: document.getElementById('wizardSmtpEmail').value,
+                        smtp_pass: document.getElementById('wizardSmtpPassword').value,
+                        smtp_secure: document.getElementById('wizardSmtpSecure').checked
+                    };
+                    for (const [key, value] of Object.entries(smtpData)) {
+                        if (value !== '' && value !== false) {
+                            await settings.save(key, value);
+                        }
+                    }
+                }
+                break;
+                
+            case 5: // Completion - mark setup as complete
+                await settings.save('setup_complete', 'true');
+                break;
+        }
+    } catch (error) {
+        console.error('Error saving wizard step data:', error);
+    }
+}
+
+// Handle wizard finish
+async function handleWizardFinish() {
+    try {
+        // Save final step data
+        await saveCurrentStepData();
+        
+        // Mark setup as complete
+        const { settings } = await import('./core/api.js');
+        await settings.save('setup_complete', 'true');
+        
+        // Close wizard modal
+        const wizardModal = bootstrap.Modal.getInstance(document.getElementById('installationWizardModal'));
+        if (wizardModal) {
+            wizardModal.hide();
+        }
+        
+        // Show success message
+        showToast('Setup completed successfully! Welcome to Wolo Pharmacy!', 'success');
+        
+        // Update UI with user name
+        const userName = document.getElementById('wizardUserName').value;
+        if (userName) {
+            updateUIWithUserName(userName);
+        }
+        
+        // Reload data
+        if (typeof loadProducts === 'function') {
+            await loadProducts();
+        }
+        if (typeof loadSettings === 'function') {
+            await loadSettings();
+        }
+        if (typeof updateDashboard === 'function') {
+            updateDashboard();
+        }
+    } catch (error) {
+        console.error('Error finishing wizard:', error);
+        showToast('Error completing setup: ' + error.message, 'danger');
+    }
+}
+
+// Setup wizard event listeners
+function setupWizardEventListeners() {
+    // Next button
+    const nextBtn = document.getElementById('wizardNextBtn');
+    if (nextBtn) {
+        nextBtn.addEventListener('click', handleWizardNext);
+    }
+    
+    // Back button
+    const backBtn = document.getElementById('wizardBackBtn');
+    if (backBtn) {
+        backBtn.addEventListener('click', handleWizardBack);
+    }
+    
+    // Skip button
+    const skipBtn = document.getElementById('wizardSkipBtn');
+    if (skipBtn) {
+        skipBtn.addEventListener('click', handleWizardSkip);
+    }
+    
+    // Finish button
+    const finishBtn = document.getElementById('wizardFinishBtn');
+    if (finishBtn) {
+        finishBtn.addEventListener('click', async () => {
+            // On Step 4, save data and close the modal instead of going to Step 5
+            if (currentWizardStep === 4) {
+                try {
+                    // Save Step 4 data before closing
+                    await saveCurrentStepData();
+                    
+                    // Close the modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('installationWizardModal'));
+                    if (modal) {
+                        modal.hide();
+                    }
+                } catch (error) {
+                    console.error('Error saving Step 4 data:', error);
+                    showToast('Error saving settings: ' + error.message, 'danger');
+                }
+            } else {
+                handleWizardFinish();
+            }
+        });
+    }
+    
+    // SMTP configuration checkbox
+    const configureSmtpCheckbox = document.getElementById('wizardConfigureSmtp');
+    const smtpFields = document.getElementById('wizardSmtpFields');
+    if (configureSmtpCheckbox && smtpFields) {
+        configureSmtpCheckbox.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                smtpFields.classList.remove('d-none');
+            } else {
+                smtpFields.classList.add('d-none');
+            }
+        });
+    }
+    
+    // Allow Enter key to proceed on forms
+    const wizardForms = document.querySelectorAll('#installationWizardModal form');
+    wizardForms.forEach(form => {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (currentWizardStep < totalWizardSteps) {
+                handleWizardNext();
+            } else {
+                handleWizardFinish();
+            }
+        });
+    });
+}
+
+// Initialize wizard when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupWizardEventListeners);
+} else {
+    setupWizardEventListeners();
 }

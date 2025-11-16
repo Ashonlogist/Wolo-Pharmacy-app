@@ -19,7 +19,7 @@
     "build:linux": "electron-builder --linux",
     "build:all": "electron-builder --win --mac --linux",
     "build:win:portable": "electron-builder --win portable",
-    "build:win:installer": "electron-builder --win nsis",
+    "build:win:installer": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis",
     "dist": "npm run build",
     "pack": "electron-builder --dir",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
@@ -99,10 +99,8 @@
       "icon": "WOLO-PHARMACY.ico",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "publisherName": "Ashong Aaron Nii Nortey",
-      "sign": null,
-      "signingHashAlgorithms": null,
-      "certificateFile": null,
-      "certificatePassword": null
+      "sign": false,
+      "signDlls": false
     },
     "nsis": {
       "oneClick": false,

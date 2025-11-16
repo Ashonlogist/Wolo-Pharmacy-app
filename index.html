@@ -1788,7 +1788,6 @@
                     <h5 class="modal-title" id="welcomeModalLabel">
                         <i class="bi bi-person-circle"></i> Welcome to Wolo Pharmacy!
                     </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" id="welcomeModalCloseBtn"></button>
                 </div>
                 <div class="modal-body">
                     <div class="text-center mb-4">
@@ -1810,6 +1809,210 @@
                             </button>
                         </div>
                     </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Installation/Setup Wizard Modal -->
+    <div class="modal fade" id="installationWizardModal" tabindex="-1" aria-labelledby="installationWizardModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="installationWizardModalLabel">
+                        <i class="bi bi-gear-fill"></i> Wolo Pharmacy Setup Wizard
+                    </h5>
+                    <span class="badge bg-light text-primary ms-2" id="wizardStepIndicator">Step 1 of 5</span>
+                </div>
+                <div class="modal-body">
+                    <!-- Progress Bar -->
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between mb-2">
+                            <small class="text-muted">Setup Progress</small>
+                            <small class="text-muted" id="wizardProgressText">0%</small>
+                        </div>
+                        <div class="progress" style="height: 8px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" 
+                                 id="wizardProgressBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Step 1: Activation -->
+                    <div class="wizard-step" id="wizardStep1">
+                        <div class="text-center mb-4">
+                            <div class="mb-3">
+                                <i class="bi bi-shield-lock" style="font-size: 4rem; color: var(--primary-color);"></i>
+                            </div>
+                            <h4>Activation Required</h4>
+                            <p class="text-muted">Please enter the activation password to continue.</p>
+                        </div>
+                        <form id="wizardActivationForm">
+                            <div class="mb-3">
+                                <label for="wizardActivationPassword" class="form-label">Activation Password *</label>
+                                <input type="password" class="form-control form-control-lg" 
+                                       id="wizardActivationPassword" placeholder="Enter activation password" required autofocus>
+                                <small class="form-text text-muted">Contact the developer if you don't have the activation password.</small>
+                            </div>
+                            <div id="wizardActivationError" class="alert alert-danger d-none" role="alert"></div>
+                        </form>
+                    </div>
+
+                    <!-- Step 2: Shop Information -->
+                    <div class="wizard-step d-none" id="wizardStep2">
+                        <div class="text-center mb-4">
+                            <div class="mb-3">
+                                <i class="bi bi-shop" style="font-size: 4rem; color: var(--primary-color);"></i>
+                            </div>
+                            <h4>Shop Information</h4>
+                            <p class="text-muted">Tell us about your pharmacy or shop.</p>
+                        </div>
+                        <form id="wizardShopForm">
+                            <div class="mb-3">
+                                <label for="wizardShopName" class="form-label">Shop/Pharmacy Name *</label>
+                                <input type="text" class="form-control" id="wizardShopName" 
+                                       placeholder="e.g., ABC Pharmacy" required>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="wizardShopPhone" class="form-label">Phone Number</label>
+                                    <input type="tel" class="form-control" id="wizardShopPhone" 
+                                           placeholder="+1234567890">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="wizardShopEmail" class="form-label">Email Address</label>
+                                    <input type="email" class="form-control" id="wizardShopEmail" 
+                                           placeholder="shop@example.com">
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="wizardShopAddress" class="form-label">Address</label>
+                                <textarea class="form-control" id="wizardShopAddress" rows="2" 
+                                          placeholder="Street address, City, Country"></textarea>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Step 3: User Information -->
+                    <div class="wizard-step d-none" id="wizardStep3">
+                        <div class="text-center mb-4">
+                            <div class="mb-3">
+                                <i class="bi bi-person-circle" style="font-size: 4rem; color: var(--primary-color);"></i>
+                            </div>
+                            <h4>Your Information</h4>
+                            <p class="text-muted">Let's personalize your experience.</p>
+                        </div>
+                        <form id="wizardUserForm">
+                            <div class="mb-3">
+                                <label for="wizardUserName" class="form-label">Your Name *</label>
+                                <input type="text" class="form-control form-control-lg" id="wizardUserName" 
+                                       placeholder="Enter your name" required autofocus>
+                                <small class="form-text text-muted">This will be used to personalize your experience throughout the app.</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="wizardUserRole" class="form-label">Your Role</label>
+                                <select class="form-select" id="wizardUserRole">
+                                    <option value="owner">Owner</option>
+                                    <option value="manager">Manager</option>
+                                    <option value="staff">Staff</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Step 4: SMTP Configuration (Optional) -->
+                    <div class="wizard-step d-none" id="wizardStep4">
+                        <div class="text-center mb-4">
+                            <div class="mb-3">
+                                <i class="bi bi-envelope" style="font-size: 4rem; color: var(--primary-color);"></i>
+                            </div>
+                            <h4>Email Configuration (Optional)</h4>
+                            <p class="text-muted">Configure email settings to send reports via email. You can skip this and configure it later.</p>
+                        </div>
+                        <form id="wizardSmtpForm">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="wizardConfigureSmtp">
+                                <label class="form-check-label" for="wizardConfigureSmtp">
+                                    Configure email settings now
+                                </label>
+                            </div>
+                            <div id="wizardSmtpFields" class="d-none">
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="wizardSmtpHost" class="form-label">SMTP Host</label>
+                                        <input type="text" class="form-control" id="wizardSmtpHost" 
+                                               placeholder="smtp.gmail.com">
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="wizardSmtpPort" class="form-label">SMTP Port</label>
+                                        <input type="number" class="form-control" id="wizardSmtpPort" 
+                                               placeholder="587">
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="wizardSmtpEmail" class="form-label">Email Address</label>
+                                        <input type="email" class="form-control" id="wizardSmtpEmail" 
+                                               placeholder="your@email.com">
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="wizardSmtpPassword" class="form-label">Password</label>
+                                        <input type="password" class="form-control" id="wizardSmtpPassword" 
+                                               placeholder="App password">
+                                    </div>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="wizardSmtpSecure">
+                                    <label class="form-check-label" for="wizardSmtpSecure">
+                                        Use SSL/TLS
+                                    </label>
+                                </div>
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i> <strong>For Gmail:</strong> Use an App Password, not your regular password. 
+                                    Generate one from your Google Account settings.
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Step 5: Completion -->
+                    <div class="wizard-step d-none" id="wizardStep5">
+                        <div class="text-center mb-4">
+                            <div class="mb-3">
+                                <i class="bi bi-check-circle-fill" style="font-size: 5rem; color: #28a745;"></i>
+                            </div>
+                            <h4 class="text-success">Setup Complete!</h4>
+                            <p class="text-muted">You're all set to start using Wolo Pharmacy.</p>
+                        </div>
+                        <div class="alert alert-success">
+                            <h6><i class="bi bi-check-circle"></i> What's Next?</h6>
+                            <ul class="mb-0 text-start">
+                                <li>Start adding your products to the inventory</li>
+                                <li>Configure additional settings in the Settings page</li>
+                                <li>Set up suppliers for better product management</li>
+                                <li>Generate reports to track your inventory</li>
+                            </ul>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-muted mb-0">
+                                <i class="bi bi-lightbulb"></i> <strong>Tip:</strong> Use the sidebar to navigate between different sections of the app.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="wizardBackBtn" style="display: none;">
+                        <i class="bi bi-arrow-left"></i> Back
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="wizardSkipBtn" style="display: none;">
+                        Skip
+                    </button>
+                    <button type="button" class="btn btn-primary" id="wizardNextBtn">
+                        Next <i class="bi bi-arrow-right"></i>
+                    </button>
+                    <button type="button" class="btn btn-success d-none" id="wizardFinishBtn">
+                        <i class="bi bi-check-circle"></i> Finish Setup
+                    </button>
                 </div>
             </div>
         </div>
