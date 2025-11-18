@@ -186,9 +186,9 @@ function setUrlParams(params) {
 // Show/hide loading overlay
 function showLoading(show, key = 'default') {
     try {
-        const loadingElement = document.getElementById('loading');
+        const loadingElement = document.getElementById(key || 'loading');
         if (!loadingElement) {
-            console.warn('Loading element not found');
+            // Silently return - loading element may not exist on all pages
             return;
         }
 

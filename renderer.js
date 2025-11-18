@@ -256,6 +256,12 @@ async function initApp() {
         // Hide splash screen and show main content
         hideSplashScreen();
         
+        // Update page headers with shop name
+        await updatePageHeadersWithShopName();
+        
+        // Initialize undo/redo buttons
+        initUndoRedo();
+        
         // Check if installation wizard should be shown (first-time setup)
         await checkAndShowInstallationWizard();
         
@@ -424,6 +430,87 @@ async function checkAndShowWelcomeModal() {
     }
 }
 
+// Helper function to get shop name
+async function getShopName() {
+    try {
+        const { settings } = await import('./core/api.js');
+        const shopName = (await settings.get('shop_name'))?.value || (await settings.get('company_name'))?.value || 'Wolo Pharmacy';
+        return shopName;
+    } catch (error) {
+        console.error('Error getting shop name:', error);
+        return 'Wolo Pharmacy';
+    }
+}
+
+// Update page headers with shop name
+async function updatePageHeadersWithShopName() {
+    try {
+        const shopName = await getShopName();
+        
+        // Update dashboard header
+        const dashboardHeader = document.querySelector('#dashboard-page .page-header h1');
+        if (dashboardHeader && !dashboardHeader.dataset.originalText) {
+            dashboardHeader.dataset.originalText = dashboardHeader.textContent;
+            dashboardHeader.innerHTML = `${shopName} - <span style="font-weight: normal;">Dashboard</span>`;
+        }
+        
+        // Update products page header
+        const productsHeader = document.querySelector('#products-page .page-header h1');
+        if (productsHeader && !productsHeader.dataset.originalText) {
+            productsHeader.dataset.originalText = productsHeader.textContent;
+            productsHeader.innerHTML = `${shopName} - <span style="font-weight: normal;">Products</span>`;
+        }
+        
+        // Update sales page header
+        const salesHeader = document.querySelector('#sales-page .page-header h1');
+        if (salesHeader && !salesHeader.dataset.originalText) {
+            salesHeader.dataset.originalText = salesHeader.textContent;
+            salesHeader.innerHTML = `${shopName} - <span style="font-weight: normal;">Record Sale</span>`;
+        }
+        
+        // Update reports page header
+        const reportsHeader = document.querySelector('#reports-page .page-header h1');
+        if (reportsHeader && !reportsHeader.dataset.originalText) {
+            reportsHeader.dataset.originalText = reportsHeader.textContent;
+            reportsHeader.innerHTML = `${shopName} - <span style="font-weight: normal;">Reports & Analytics</span>`;
+        }
+        
+        // Update table captions with shop name
+        updateTableCaptionsWithShopName(shopName);
+        
+    } catch (error) {
+        console.error('Error updating page headers with shop name:', error);
+    }
+}
+
+// Update table captions with shop name
+function updateTableCaptionsWithShopName(shopName) {
+    // Dashboard tables
+    const dashboardSalesTable = document.querySelector('#dashboard-page .card-header h5');
+    if (dashboardSalesTable && dashboardSalesTable.textContent.includes("Today's Sales")) {
+        if (!dashboardSalesTable.dataset.originalText) {
+            dashboardSalesTable.dataset.originalText = dashboardSalesTable.textContent;
+            dashboardSalesTable.innerHTML = `${shopName} - Today's Sales`;
+        }
+    }
+    
+    // Products table - add shop name to card header if exists
+    const productsCardHeader = document.querySelector('#products-page .card-header h5');
+    if (productsCardHeader && !productsCardHeader.dataset.originalText) {
+        productsCardHeader.dataset.originalText = productsCardHeader.textContent;
+        productsCardHeader.innerHTML = `${shopName} - ${productsCardHeader.textContent}`;
+    }
+    
+    // Sales table
+    const salesCardHeader = document.querySelector('#sales-page .card-header h5');
+    if (salesCardHeader && salesCardHeader.textContent.includes("Today's Sales")) {
+        if (!salesCardHeader.dataset.originalText) {
+            salesCardHeader.dataset.originalText = salesCardHeader.textContent;
+            salesCardHeader.innerHTML = `${shopName} - Today's Sales`;
+        }
+    }
+}
+
 // Update UI elements with user name
 async function updateUIWithUserName(userName) {
     if (!userName) {
@@ -454,6 +541,9 @@ async function updateUIWithUserName(userName) {
             userNameSetting.value = userName;
         }
     }
+    
+    // Also update page headers with shop name
+    await updatePageHeadersWithShopName();
 }
 
 // Get user name (helper function)
@@ -478,7 +568,10 @@ async function getUserName() {
 
 // Expose functions globally
 window.getUserName = getUserName;
+window.getShopName = getShopName;
+window.updatePageHeadersWithShopName = updatePageHeadersWithShopName;
 window.updateUIWithUserName = updateUIWithUserName;
+window.initUndoRedo = initUndoRedo;
 
 // Development-only initialization removed. The app must run inside Electron with real backend IPC.
 
@@ -486,20 +579,27 @@ window.updateUIWithUserName = updateUIWithUserName;
 async function loadInitialData() {
     try {
         // Load initial data needed across the app
+        // Use the API module instead of window.app which doesn't exist
+        const { products: productsApi, settings: settingsApi } = await import('./core/api.js');
+        
         const [products, settings] = await Promise.all([
-            window.app.products.getAll().catch(() => []),
-            window.app.settings.get().catch(() => ({}))
+            productsApi.getAll().catch(() => []),
+            Promise.resolve({}).catch(() => ({})) // Settings are loaded separately
         ]);
         
-        // Update global state
-        window.appState = {
-            products,
-            settings,
-            isLoading: false
-        };
+        // Update global state if it exists
+        if (window.appState) {
+            window.appState = {
+                ...window.appState,
+                products,
+                isLoading: false
+            };
+        }
         
-        // Update UI
-        updateUI();
+        // Update UI if function exists
+        if (typeof updateUI === 'function') {
+            updateUI();
+        }
         
         return { products, settings };
     } catch (error) {
@@ -2036,25 +2136,47 @@ const stateHistory = {
 
 // Initialize undo/redo buttons
 function initUndoRedo() {
+    // Remove old listeners by cloning buttons to prevent duplicates
     const undoBtn = document.getElementById('undoBtn');
     const redoBtn = document.getElementById('redoBtn');
     const undoBtnSales = document.getElementById('undoBtnSales');
     const redoBtnSales = document.getElementById('redoBtnSales');
     
     if (undoBtn) {
-        undoBtn.addEventListener('click', handleGlobalUndo);
+        // Clone to remove old listeners
+        const newUndoBtn = undoBtn.cloneNode(true);
+        undoBtn.parentNode.replaceChild(newUndoBtn, undoBtn);
+        newUndoBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleGlobalUndo();
+        });
     }
     
     if (redoBtn) {
-        redoBtn.addEventListener('click', handleGlobalRedo);
+        const newRedoBtn = redoBtn.cloneNode(true);
+        redoBtn.parentNode.replaceChild(newRedoBtn, redoBtn);
+        newRedoBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleGlobalRedo();
+        });
     }
     
     if (undoBtnSales) {
-        undoBtnSales.addEventListener('click', handleGlobalUndo);
+        const newUndoBtnSales = undoBtnSales.cloneNode(true);
+        undoBtnSales.parentNode.replaceChild(newUndoBtnSales, undoBtnSales);
+        newUndoBtnSales.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleGlobalUndo();
+        });
     }
     
     if (redoBtnSales) {
-        redoBtnSales.addEventListener('click', handleGlobalRedo);
+        const newRedoBtnSales = redoBtnSales.cloneNode(true);
+        redoBtnSales.parentNode.replaceChild(newRedoBtnSales, redoBtnSales);
+        newRedoBtnSales.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleGlobalRedo();
+        });
     }
     
     // Update button states
@@ -2221,15 +2343,28 @@ async function updateProductSuggestions(filter = '') {
 
 // Global keyboard shortcuts
 document.addEventListener('keydown', (e) => {
-    // Ctrl+Z for undo
-    if (e.ctrlKey && e.key === 'z') {
-        e.preventDefault();
-        handleUndo();
+    // Don't intercept if user is typing in an input/textarea
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+        // Allow default behavior for inputs, but still handle undo/redo
+        if (e.ctrlKey && (e.key === 'z' || e.key === 'y')) {
+            // Let browser handle undo/redo in text inputs
+            return;
+        }
     }
-    // Ctrl+Y for redo
-    if (e.ctrlKey && e.key === 'y') {
+    
+    // Ctrl+Z for undo
+    if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
-        handleRedo();
+        if (window.handleGlobalUndo) {
+            window.handleGlobalUndo();
+        }
+    }
+    // Ctrl+Shift+Z or Ctrl+Y for redo
+    if ((e.ctrlKey && e.shiftKey && e.key === 'z') || (e.ctrlKey && e.key === 'y')) {
+        e.preventDefault();
+        if (window.handleGlobalRedo) {
+            window.handleGlobalRedo();
+        }
     }
 });
 
@@ -2270,18 +2405,10 @@ async function initializeUndoRedo() {
         saleQuantityInput.addEventListener('input', calculateSaleTotal);
         populateProductDropdown(); // Load products if we're on the sales page
         
-        // Initialize sales-specific undo/redo buttons
-        const undoBtnSales = document.getElementById('undoBtnSales');
-        const redoBtnSales = document.getElementById('redoBtnSales');
-        
-        if (undoBtnSales) {
-            undoBtnSales.addEventListener('click', handleUndo);
-            undoBtnSales.disabled = !stateHistory.canUndo();
-        }
-        
-        if (redoBtnSales) {
-            redoBtnSales.addEventListener('click', handleRedo);
-            redoBtnSales.disabled = !stateHistory.canRedo();
+        // Sales-specific undo/redo buttons are already initialized by initUndoRedo()
+        // Just update their state
+        if (window.globalUndoRedo) {
+            window.globalUndoRedo.updateButtons();
         }
     }
     
@@ -3801,14 +3928,16 @@ function updateWizardStep() {
     if (finishBtn) {
         // Show finish button on Step 4 (after password field)
         const shouldShow = currentWizardStep === 4;
-        if (shouldShow && finishBtn.style.display === 'none') {
+        if (shouldShow) {
+            finishBtn.classList.remove('d-none');
             finishBtn.style.display = 'inline-block';
             finishBtn.style.animation = 'buttonFadeIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
             // Add celebration animation
             setTimeout(() => {
                 finishBtn.style.animation = 'successButtonPulse 0.6s ease-out';
             }, 600);
-        } else if (!shouldShow) {
+        } else {
+            finishBtn.classList.add('d-none');
             finishBtn.style.display = 'none';
         }
     }
@@ -4048,10 +4177,34 @@ function setupWizardEventListeners() {
                     // Save Step 4 data before closing
                     await saveCurrentStepData();
                     
+                    // Mark setup as complete
+                    const { settings } = await import('./core/api.js');
+                    await settings.save('setup_complete', 'true');
+                    
                     // Close the modal
                     const modal = bootstrap.Modal.getInstance(document.getElementById('installationWizardModal'));
                     if (modal) {
                         modal.hide();
+                    }
+                    
+                    // Show success message
+                    showToast('Setup completed successfully! Welcome to Wolo Pharmacy!', 'success');
+                    
+                    // Update UI with user name if available
+                    const userName = document.getElementById('wizardUserName')?.value;
+                    if (userName) {
+                        updateUIWithUserName(userName);
+                    }
+                    
+                    // Reload data
+                    if (typeof loadProducts === 'function') {
+                        await loadProducts();
+                    }
+                    if (typeof loadSettings === 'function') {
+                        await loadSettings();
+                    }
+                    if (typeof updateDashboard === 'function') {
+                        updateDashboard();
                     }
                 } catch (error) {
                     console.error('Error saving Step 4 data:', error);

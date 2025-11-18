@@ -547,7 +547,7 @@
     </script>
     
     <!-- Page Scripts (load after utilities) -->
-    <script src="drag-drop.js"></script>
+    <!-- drag-drop.js removed - file not found, functionality not needed -->
     
     <style>
     /* Drag and Drop Styling */
@@ -884,13 +884,15 @@
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Category</label>
-                            <select id="categoryFilter" class="form-select form-select-sm">
+                            <select id="dashboardCategoryFilter" class="form-select form-select-sm">
                                 <option value="">All Categories</option>
                             </select>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">View</label>
                             <select id="timeGrouping" class="form-select form-select-sm">
+                                <option value="sale">Per Sale</option>
+                                <option value="hour">Hourly</option>
                                 <option value="day">Daily</option>
                                 <option value="week">Weekly</option>
                                 <option value="month">Monthly</option>
@@ -1442,10 +1444,18 @@
                                 <label for="reportType" class="form-label">Report Type</label>
                                 <select class="form-select" id="reportType" required>
                                     <option value="">-- Select Report Type --</option>
-                                    <option value="sales">Sales Report</option>
-                                    <option value="inventory">Inventory Report</option>
-                                    <option value="low-stock">Low Stock Report</option>
-                                    <option value="expiring">Expiring Products</option>
+                                    <optgroup label="Business Reports">
+                                        <option value="sales">Sales Report</option>
+                                        <option value="inventory">Inventory Report</option>
+                                        <option value="low-stock">Low Stock Report</option>
+                                        <option value="expiring">Expiring Products</option>
+                                    </optgroup>
+                                    <optgroup label="Accounting Reports">
+                                        <option value="income-statement">Income Statement (P&L)</option>
+                                        <option value="balance-sheet">Balance Sheet</option>
+                                        <option value="cash-flow">Cash Flow Statement</option>
+                                        <option value="profit-loss">Profit & Loss Summary</option>
+                                    </optgroup>
                                 </select>
                             </div>
                             <div class="col-md-4" id="dateRangeGroup">
@@ -1667,9 +1677,17 @@
                         </div>
                         <small class="form-text text-muted">This name will be used to personalize your experience throughout the app.</small>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">Shop/Pharmacy Name</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-shop"></i></span>
+                            <input type="text" class="form-control" id="shopNameSetting" placeholder="Enter shop/pharmacy name">
+                        </div>
+                        <small class="form-text text-muted">This name will be displayed in reports, receipts, and throughout the app.</small>
+                    </div>
                     <div class="text-end">
                         <button type="button" class="btn btn-primary" id="saveUserNameBtn">
-                            <i class="bi bi-save"></i> Save Name
+                            <i class="bi bi-save"></i> Save Profile
                         </button>
                     </div>
                 </div>

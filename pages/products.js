@@ -16,6 +16,8 @@ let productsPageInitialized = false;
 async function initializeProductsPage() {
     if (productsPageInitialized) {
         console.warn('Products page already initialized, skipping...');
+        // Still update category filter even if already initialized
+        await updateCategoryFilter();
         return;
     }
     
@@ -23,6 +25,8 @@ async function initializeProductsPage() {
         productsPageInitialized = true;
         await loadProducts();
         setupEventListeners();
+        // Ensure category filter is populated after products load
+        await updateCategoryFilter();
         console.log('Products page initialized successfully');
     } catch (error) {
         console.error('Error initializing products page:', error);
@@ -179,7 +183,7 @@ async function loadProducts() {
         filteredProducts = [...allProducts];
         renderProductsTable();
         updatePagination();
-        updateCategoryFilter();
+        await updateCategoryFilter(); // Make it async since we're loading from API
         
         if (allProducts.length > 0) {
             showToast(`${allProducts.length} product(s) loaded`, 'success');
@@ -380,6 +384,11 @@ function handleProductSelect(productId, isChecked) {
 
 // Update bulk action buttons state
 function updateBulkActionButtons() {
+    updateSelectionUI();
+}
+
+// Update selection UI (count and buttons)
+function updateSelectionUI() {
     const hasSelection = selectedProducts.size > 0;
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
     const exportSelectedBtn = document.getElementById('exportSelectedBtn');
@@ -510,6 +519,13 @@ function renderProductsTable() {
         
         row.innerHTML = `
             <td>
+                <input type="checkbox" 
+                       class="form-check-input product-checkbox" 
+                       value="${product.id}"
+                       ${isSelected ? 'checked' : ''}
+                       onchange="handleProductSelect('${product.id}', this.checked)">
+            </td>
+            <td>
                 <div class="fw-semibold">${name}</div>
                 <small class="text-muted">${product.sku || 'No SKU'}</small>
             </td>
@@ -587,25 +603,109 @@ function attachActionButtonListeners() {
 }
 
 // Update category filter dropdown
-function updateCategoryFilter() {
-    const categoryFilter = document.getElementById('categoryFilter');
-    if (!categoryFilter) return;
+async function updateCategoryFilter() {
+    console.log('updateCategoryFilter called, allProducts count:', allProducts.length);
     
-    // Get unique categories
-    const categories = [...new Set(allProducts.map(p => p.category).filter(Boolean))];
+    // Find the categoryFilter in the products page (inside filters-bar or products-page)
+    let categoryFilter = document.querySelector('#products-page #categoryFilter') || 
+                         document.querySelector('.filters-bar #categoryFilter') ||
+                         document.querySelector('#categoryFilter');
+    
+    if (!categoryFilter) {
+        console.warn('Category filter element not found. Retrying after delay...');
+        // Try again after a short delay in case DOM isn't ready
+        await new Promise(resolve => setTimeout(resolve, 200));
+        categoryFilter = document.querySelector('#products-page #categoryFilter') || 
+                         document.querySelector('.filters-bar #categoryFilter') ||
+                         document.querySelector('#categoryFilter');
+        if (!categoryFilter) {
+            console.error('Category filter element still not found after retry');
+            return;
+        }
+    }
+    
+    console.log('Category filter element found:', categoryFilter, 'Parent:', categoryFilter.closest('.filters-bar') || categoryFilter.closest('#products-page'));
+    
+    // Get unique categories from products (handle both snake_case and camelCase)
+    const categoriesFromProducts = [...new Set(
+        allProducts
+            .map(p => p.category || p.category_name || p.categoryName)
+            .filter(Boolean)
+            .map(cat => String(cat).trim())
+            .filter(cat => cat.length > 0)
+    )];
+    
+    // Try to also load from categories API
+    let categoriesFromAPI = [];
+    try {
+        const { categories: categoriesApi } = await import('../core/api.js');
+        if (categoriesApi && typeof categoriesApi.getAll === 'function') {
+            const apiCategories = await categoriesApi.getAll();
+            if (Array.isArray(apiCategories)) {
+                categoriesFromAPI = apiCategories.map(cat => 
+                    typeof cat === 'string' ? cat : (cat.name || cat.category || '')
+                ).filter(Boolean);
+            }
+        }
+    } catch (err) {
+        console.warn('Could not load categories from API:', err);
+    }
+    
+    // Combine and deduplicate categories
+    const allCategories = [...new Set([...categoriesFromProducts, ...categoriesFromAPI])].sort();
+    
+    console.log('Categories found:', {
+        allProductsCount: allProducts.length,
+        fromProducts: categoriesFromProducts,
+        fromAPI: categoriesFromAPI,
+        combined: allCategories,
+        sampleProducts: allProducts.slice(0, 3).map(p => ({ name: p.name, category: p.category, category_name: p.category_name }))
+    });
     
     // Save current selection
     const currentValue = categoryFilter.value;
     
-    // Update options
-    categoryFilter.innerHTML = `
-        <option value="">All Categories</option>
-        ${categories.map(cat => `<option value="${cat}">${cat}</option>`).join('')}
-    `;
+    // Clear existing options first
+    categoryFilter.innerHTML = '';
+    
+    // Add "All Categories" option
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = 'All Categories';
+    categoryFilter.appendChild(allOption);
+    
+    // Add category options using createElement to ensure proper DOM manipulation
+    allCategories.forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat;
+        option.textContent = cat;
+        categoryFilter.appendChild(option);
+    });
+    
+    // Force a reflow to ensure the DOM is updated
+    categoryFilter.offsetHeight;
     
     // Restore selection if still valid
-    if (categories.includes(currentValue)) {
+    if (allCategories.includes(currentValue)) {
         categoryFilter.value = currentValue;
+    }
+    
+    // Verify the update worked
+    const optionCount = categoryFilter.options.length;
+    const optionTexts = Array.from(categoryFilter.options).map(opt => opt.textContent);
+    console.log(`Category filter updated with ${allCategories.length} categories. Total options: ${optionCount}`, optionTexts);
+    
+    // Double-check by reading back the options
+    if (optionCount <= 1 && allCategories.length > 0) {
+        console.error('Options were not added properly! Retrying with innerHTML...');
+        // Fallback to innerHTML if appendChild didn't work
+        categoryFilter.innerHTML = `
+            <option value="">All Categories</option>
+            ${allCategories.map(cat => `<option value="${cat}">${cat}</option>`).join('')}
+        `;
+        if (allCategories.includes(currentValue)) {
+            categoryFilter.value = currentValue;
+        }
     }
 }
 
@@ -848,5 +948,6 @@ window.editProduct = editProduct;
 window.confirmDelete = confirmDelete;
 window.deleteProduct = deleteProduct;
 window.attachActionButtonListeners = attachActionButtonListeners;
+window.updateCategoryFilter = updateCategoryFilter;
 
 // Remove duplicate initialization - already handled by initializeProductsPage()

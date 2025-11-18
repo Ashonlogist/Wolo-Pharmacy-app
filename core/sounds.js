@@ -19,6 +19,22 @@ class SoundManager {
     initAudioContext() {
         try {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Resume audio context on first user interaction (required by browser autoplay policies)
+            const resumeAudio = () => {
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    this.audioContext.resume().then(() => {
+                        console.log('Audio context resumed');
+                    }).catch(err => {
+                        console.warn('Could not resume audio context:', err);
+                    });
+                }
+            };
+            
+            // Try to resume on any user interaction
+            document.addEventListener('click', resumeAudio, { once: true });
+            document.addEventListener('keydown', resumeAudio, { once: true });
+            document.addEventListener('touchstart', resumeAudio, { once: true });
         } catch (error) {
             console.warn('Web Audio API not supported, using fallback:', error);
             this.audioContext = null;
@@ -55,10 +71,22 @@ class SoundManager {
     }
     
     // Generate a beep sound using Web Audio API
-    playBeep(frequency = 800, duration = 200, type = 'sine') {
-        if (!this.enabled || !this.audioContext) return;
+    async playBeep(frequency = 800, duration = 200, type = 'sine') {
+        if (!this.enabled) return;
         
         try {
+            // Ensure audio context exists
+            if (!this.audioContext) {
+                this.initAudioContext();
+            }
+            
+            // Resume audio context if suspended (required by browser autoplay policies)
+            if (this.audioContext && this.audioContext.state === 'suspended') {
+                await this.audioContext.resume();
+            }
+            
+            if (!this.audioContext) return;
+            
             const oscillator = this.audioContext.createOscillator();
             const gainNode = this.audioContext.createGain();
             
@@ -68,8 +96,11 @@ class SoundManager {
             oscillator.frequency.value = frequency;
             oscillator.type = type;
             
+            // Convert volume from 0-1 to actual gain (0-0.3 for beeps)
+            const actualVolume = this.volume * 0.3;
+            
             gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
-            gainNode.gain.linearRampToValueAtTime(this.volume * 0.3, this.audioContext.currentTime + 0.01);
+            gainNode.gain.linearRampToValueAtTime(actualVolume, this.audioContext.currentTime + 0.01);
             gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration / 1000);
             
             oscillator.start(this.audioContext.currentTime);
@@ -82,84 +113,84 @@ class SoundManager {
     // Play success sound
     playSuccess() {
         if (!this.enabled) return;
-        this.playBeep(800, 150, 'sine');
-        setTimeout(() => this.playBeep(1000, 150, 'sine'), 100);
+        this.playBeep(800, 150, 'sine').catch(() => {});
+        setTimeout(() => this.playBeep(1000, 150, 'sine').catch(() => {}), 100);
     }
     
     // Play error sound
     playError() {
         if (!this.enabled) return;
-        this.playBeep(400, 300, 'sawtooth');
+        this.playBeep(400, 300, 'sawtooth').catch(() => {});
     }
     
     // Play warning sound
     playWarning() {
         if (!this.enabled) return;
-        this.playBeep(600, 200, 'square');
-        setTimeout(() => this.playBeep(500, 200, 'square'), 150);
+        this.playBeep(600, 200, 'square').catch(() => {});
+        setTimeout(() => this.playBeep(500, 200, 'square').catch(() => {}), 150);
     }
     
     // Play info sound
     playInfo() {
         if (!this.enabled) return;
-        this.playBeep(700, 100, 'sine');
+        this.playBeep(700, 100, 'sine').catch(() => {});
     }
     
     // Play click sound
     playClick() {
         if (!this.enabled) return;
-        this.playBeep(1000, 50, 'sine');
+        this.playBeep(1000, 50, 'sine').catch(() => {});
     }
     
     // Play notification sound
     playNotification() {
         if (!this.enabled) return;
         // Pleasant notification melody
-        this.playBeep(800, 100, 'sine');
-        setTimeout(() => this.playBeep(1000, 100, 'sine'), 120);
-        setTimeout(() => this.playBeep(1200, 150, 'sine'), 240);
+        this.playBeep(800, 100, 'sine').catch(() => {});
+        setTimeout(() => this.playBeep(1000, 100, 'sine').catch(() => {}), 120);
+        setTimeout(() => this.playBeep(1200, 150, 'sine').catch(() => {}), 240);
     }
     
     // Play delete sound
     playDelete() {
         if (!this.enabled) return;
-        this.playBeep(300, 200, 'sawtooth');
+        this.playBeep(300, 200, 'sawtooth').catch(() => {});
     }
     
     // Play save sound
     playSave() {
         if (!this.enabled) return;
-        this.playBeep(600, 100, 'sine');
-        setTimeout(() => this.playBeep(800, 100, 'sine'), 100);
-        setTimeout(() => this.playBeep(1000, 150, 'sine'), 200);
+        this.playBeep(600, 100, 'sine').catch(() => {});
+        setTimeout(() => this.playBeep(800, 100, 'sine').catch(() => {}), 100);
+        setTimeout(() => this.playBeep(1000, 150, 'sine').catch(() => {}), 200);
     }
     
     // Play page transition sound
     playPageTransition() {
         if (!this.enabled) return;
-        this.playBeep(500, 80, 'sine');
+        this.playBeep(500, 80, 'sine').catch(() => {});
     }
     
     // Play search sound
     playSearch() {
         if (!this.enabled) return;
-        this.playBeep(900, 60, 'sine');
+        this.playBeep(900, 60, 'sine').catch(() => {});
     }
     
     // Play export sound
     playExport() {
         if (!this.enabled) return;
         // Success-like sound for export
-        this.playBeep(700, 100, 'sine');
-        setTimeout(() => this.playBeep(900, 100, 'sine'), 100);
+        this.playBeep(700, 100, 'sine').catch(() => {});
+        setTimeout(() => this.playBeep(900, 100, 'sine').catch(() => {}), 100);
     }
     
     // Play import sound
     playImport() {
         if (!this.enabled) return;
         // Different melody for import
-        this.playBeep(600, 100, 'sine');
-        setTimeout(() => this.playBeep(800, 100, 'sine'), 100);
+        this.playBeep(600, 100, 'sine').catch(() => {});
+        setTimeout(() => this.playBeep(800, 100, 'sine').catch(() => {}), 100);
     }
     
     // Toggle sound on/off

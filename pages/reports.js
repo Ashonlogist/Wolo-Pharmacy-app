@@ -7,6 +7,18 @@ import { showToast, formatCurrency, formatDate } from '../core/utils.js';
 let chart1 = null;
 let chart2 = null;
 
+// Helper function to get shop name
+async function getShopName() {
+    try {
+        const { settings } = await import('../core/api.js');
+        const shopName = (await settings.get('shop_name'))?.value || (await settings.get('company_name'))?.value || 'Wolo Pharmacy';
+        return shopName;
+    } catch (error) {
+        console.error('Error getting shop name:', error);
+        return 'Wolo Pharmacy';
+    }
+}
+
 // Prevent duplicate initialization
 let reportsPageInitialized = false;
 
@@ -221,12 +233,20 @@ async function generateReport() {
         const threshold = document.getElementById('lowStockThreshold')?.value || 10;
         
         // Validate dates if they're required
-        if (['sales', 'inventory', 'expiring'].includes(reportType)) {
+        if (['sales', 'inventory', 'expiring', 'income-statement', 'cash-flow', 'profit-loss'].includes(reportType)) {
             if (!startDate || !endDate) {
                 showToast('Please select a date range', 'warning');
                 return;
             }
             if (!validateDateRange()) {
+                return;
+            }
+        }
+        
+        // Balance sheet only needs end date
+        if (reportType === 'balance-sheet') {
+            if (!endDate) {
+                showToast('Please select an end date', 'warning');
                 return;
             }
         }
@@ -257,20 +277,51 @@ async function generateReport() {
                     reportData = await reports.getExpiringProducts({ startDate, endDate, category });
                     break;
                     
+                case 'income-statement':
+                    reportTitle = 'Income Statement (Profit & Loss)';
+                    reportData = await generateIncomeStatement(startDate, endDate);
+                    break;
+                    
+                case 'balance-sheet':
+                    reportTitle = 'Balance Sheet';
+                    reportData = await generateBalanceSheet(endDate);
+                    break;
+                    
+                case 'cash-flow':
+                    reportTitle = 'Cash Flow Statement';
+                    reportData = await generateCashFlowStatement(startDate, endDate);
+                    break;
+                    
+                case 'profit-loss':
+                    reportTitle = 'Profit & Loss Summary';
+                    reportData = await generateProfitLossSummary(startDate, endDate);
+                    break;
+                    
                 default:
                     throw new Error('Unsupported report type');
             }
             
-            // Ensure reportData is an array
-            const processedData = Array.isArray(reportData) ? reportData : (reportData?.data || []);
+            // For accounting reports, data is an object, not an array
+            const processedData = ['income-statement', 'balance-sheet', 'cash-flow', 'profit-loss'].includes(reportType) 
+                ? reportData 
+                : (Array.isArray(reportData) ? reportData : (reportData?.data || []));
             
             // Render the report
             await renderReport(reportType, processedData);
             
-            // Update the report title
+            // Update the report title with shop name
             const reportTitleElement = document.getElementById('reportTitle');
             if (reportTitleElement) {
-                reportTitleElement.textContent = reportTitle;
+                const shopName = await getShopName();
+                reportTitleElement.innerHTML = `<strong>${shopName}</strong> - ${reportTitle}`;
+            }
+            
+            // Update report footer with shop name
+            const reportFooter = document.getElementById('reportFooter');
+            if (reportFooter) {
+                const shopName = await getShopName();
+                const generatedDate = new Date().toLocaleString();
+                reportFooter.innerHTML = `<strong>${shopName}</strong> | Generated on ${generatedDate}`;
             }
             
             // Show the report container and summary
@@ -330,6 +381,22 @@ async function renderReport(reportType, data) {
                 
             case 'expiring':
                 await renderExpiringProductsReport(data);
+                break;
+                
+            case 'income-statement':
+                await renderIncomeStatement(data);
+                break;
+                
+            case 'balance-sheet':
+                await renderBalanceSheet(data);
+                break;
+                
+            case 'cash-flow':
+                await renderCashFlowStatement(data);
+                break;
+                
+            case 'profit-loss':
+                await renderProfitLossSummary(data);
                 break;
                 
             default:
@@ -412,13 +479,17 @@ async function renderSalesReport(data) {
             totalItems += itemCount;
         });
         
-        // Add footer with totals
+        // Add footer with totals and shop name
+        const shopName = await getShopName();
         tableFooter.innerHTML = `
             <tr class="table-active">
                 <td colspan="3" class="text-end"><strong>Total:</strong></td>
                 <td><strong>${totalItems} items</strong></td>
                 <td><strong>${formatCurrency(totalSales)}</strong></td>
                 <td></td>
+            </tr>
+            <tr class="table-secondary">
+                <td colspan="6" class="text-center"><strong>${shopName}</strong></td>
             </tr>
         `;
         
@@ -523,7 +594,8 @@ async function renderInventoryReport(data) {
             tableBody.appendChild(row);
         });
         
-        // Add footer with totals
+        // Add footer with totals and shop name
+        const shopName = await getShopName();
         tableFooter.innerHTML = `
             <tr class="table-active">
                 <td colspan="3" class="text-end"><strong>Total:</strong></td>
@@ -531,6 +603,9 @@ async function renderInventoryReport(data) {
                 <td></td>
                 <td><strong>${formatCurrency(totalValue)}</strong></td>
                 <td></td>
+            </tr>
+            <tr class="table-secondary">
+                <td colspan="7" class="text-center"><strong>${shopName}</strong></td>
             </tr>
         `;
         
@@ -579,8 +654,16 @@ async function renderLowStockReport(data) {
             return qtyA - qtyB;
         });
         
-        // Set up table headers
+        const shopName = await getShopName();
+        
+        // Set up table headers with shop name
         tableHeader.innerHTML = `
+            <tr>
+                <th colspan="7" class="text-center bg-primary text-white py-2">
+                    <strong>${shopName}</strong><br>
+                    <small>LOW STOCK REPORT</small>
+                </th>
+            </tr>
             <tr>
                 <th>Product</th>
                 <th>Category</th>
@@ -618,7 +701,7 @@ async function renderLowStockReport(data) {
             tableBody.appendChild(row);
         });
         
-        // Add footer with counts
+        // Add footer with counts and shop name
         const lowStockCount = lowStockData.filter(item => (parseInt(item.quantity_in_stock || item.quantityInStock || 0) > 0)).length;
         const outOfStockCount = lowStockData.filter(item => (parseInt(item.quantity_in_stock || item.quantityInStock || 0) === 0)).length;
         
@@ -627,6 +710,9 @@ async function renderLowStockReport(data) {
                 <td colspan="7" class="text-end">
                     <strong>Total Low/Out of Stock Items: ${lowStockData.length} (${lowStockCount} low stock, ${outOfStockCount} out of stock)</strong>
                 </td>
+            </tr>
+            <tr class="table-secondary">
+                <td colspan="7" class="text-center"><strong>${shopName}</strong></td>
             </tr>
         `;
         
@@ -745,11 +831,15 @@ async function renderExpiringProductsReport(data) {
             return daysUntilExpiry > 0 && daysUntilExpiry <= 30;
         }).length;
         
+        const shopName = await getShopName();
         tableFooter.innerHTML = `
             <tr class="table-active">
                 <td colspan="6" class="text-end">
                     <strong>Total: ${expiringData.length} items (${expiredCount} expired, ${expiringSoonCount} expiring soon)</strong>
                 </td>
+            </tr>
+            <tr class="table-secondary">
+                <td colspan="6" class="text-center"><strong>${shopName}</strong></td>
             </tr>
         `;
         
@@ -1032,6 +1122,598 @@ async function exportSalesToExcel() {
         showToast(`Failed to export sales data: ${error.message || 'Unknown error'}`, 'danger');
         throw error;
     }
+}
+
+// ============================================
+// Accounting Report Generation Functions
+// ============================================
+
+// Generate Income Statement (Profit & Loss)
+async function generateIncomeStatement(startDate, endDate) {
+    try {
+        // Get sales data
+        const salesData = await reports.getSalesReport({ startDate, endDate });
+        const sales = Array.isArray(salesData) ? salesData : (salesData?.data || []);
+        
+        // Get all products to calculate COGS
+        const productsData = await products.getAll();
+        const allProducts = Array.isArray(productsData) ? productsData : (productsData?.data || []);
+        
+        // Calculate Revenue (Total Sales)
+        const totalRevenue = sales.reduce((sum, sale) => {
+            return sum + parseFloat(sale.total_amount || sale.total || 0);
+        }, 0);
+        
+        // Calculate Cost of Goods Sold (COGS)
+        // COGS = Sum of (quantity sold * unit cost) for all items sold
+        let totalCOGS = 0;
+        
+        // Get sale items for all sales
+        const { ipcCall } = await import('../core/api.js');
+        for (const sale of sales) {
+            try {
+                // Get sale items from database
+                const saleItems = await ipcCall('get-sale-items', { saleId: sale.id });
+                const items = Array.isArray(saleItems) ? saleItems : (saleItems?.data || []);
+                
+                for (const item of items) {
+                    // Use product cost data from sale_items query if available
+                    let unitCost = 0;
+                    
+                    // Try multiple ways to get the cost
+                    // 1. From sale_items if it has cost data
+                    if (item.total_bulk_cost && item.quantity_purchased) {
+                        const quantityPurchased = parseFloat(item.quantity_purchased || 1);
+                        const totalBulkCost = parseFloat(item.total_bulk_cost || 0);
+                        unitCost = quantityPurchased > 0 ? totalBulkCost / quantityPurchased : 0;
+                    } 
+                    // 2. Try cost_price directly from item
+                    else if (item.cost_price || item.costPrice) {
+                        unitCost = parseFloat(item.cost_price || item.costPrice || 0);
+                    }
+                    // 3. Fallback to finding product in allProducts
+                    else {
+                        const product = allProducts.find(p => 
+                            p.id === item.product_id || 
+                            p.id === item.productId ||
+                            (item.product_id && p.id && p.id.toString() === item.product_id.toString())
+                        );
+                        if (product) {
+                            // Try cost_price first
+                            if (product.cost_price || product.costPrice) {
+                                unitCost = parseFloat(product.cost_price || product.costPrice || 0);
+                            }
+                            // Then try calculating from total_bulk_cost
+                            else if (product.total_bulk_cost && product.quantity_purchased) {
+                                const quantityPurchased = parseFloat(product.quantity_purchased || product.quantityPurchased || 1);
+                                const totalBulkCost = parseFloat(product.total_bulk_cost || product.totalBulkCost || 0);
+                                unitCost = quantityPurchased > 0 ? totalBulkCost / quantityPurchased : 0;
+                            }
+                            // Last resort: estimate from selling price (assume 30% margin)
+                            else if (product.selling_price || product.sellingPrice) {
+                                const sellingPrice = parseFloat(product.selling_price || product.sellingPrice || 0);
+                                unitCost = sellingPrice / 1.3; // Estimate cost as 70% of selling price
+                            }
+                        }
+                    }
+                    
+                    const quantitySold = parseFloat(item.quantity || item.quantity_sold || 0);
+                    if (quantitySold > 0 && unitCost > 0) {
+                        totalCOGS += (quantitySold * unitCost);
+                    }
+                }
+            } catch (error) {
+                console.warn(`Could not get sale items for sale ${sale.id}:`, error);
+                // Fallback: estimate COGS as 60% of revenue if we can't get item details
+                const saleAmount = parseFloat(sale.total_amount || sale.total || 0);
+                totalCOGS += (saleAmount * 0.6);
+            }
+        }
+        
+        // Calculate Gross Profit
+        const grossProfit = totalRevenue - totalCOGS;
+        const grossProfitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+        
+        // Operating Expenses (placeholder - can be expanded with actual expense tracking)
+        const operatingExpenses = 0; // TODO: Add expense tracking
+        
+        // Calculate Net Income
+        const netIncome = grossProfit - operatingExpenses;
+        const netProfitMargin = totalRevenue > 0 ? (netIncome / totalRevenue) * 100 : 0;
+        
+        return {
+            period: { startDate, endDate },
+            revenue: {
+                total: totalRevenue,
+                sales: totalRevenue
+            },
+            cogs: {
+                total: totalCOGS,
+                percentage: totalRevenue > 0 ? (totalCOGS / totalRevenue) * 100 : 0
+            },
+            grossProfit: {
+                total: grossProfit,
+                margin: grossProfitMargin
+            },
+            operatingExpenses: {
+                total: operatingExpenses,
+                breakdown: {}
+            },
+            netIncome: {
+                total: netIncome,
+                margin: netProfitMargin
+            },
+            salesCount: sales.length
+        };
+    } catch (error) {
+        console.error('Error generating income statement:', error);
+        throw error;
+    }
+}
+
+// Generate Balance Sheet
+async function generateBalanceSheet(asOfDate) {
+    try {
+        // Get all products to calculate inventory value
+        const productsData = await products.getAll();
+        const allProducts = Array.isArray(productsData) ? productsData : (productsData?.data || []);
+        
+        // Calculate Inventory Value (Current Assets)
+        let inventoryValue = 0;
+        allProducts.forEach(product => {
+            const quantity = parseFloat(product.quantity_in_stock || 0);
+            const unitCost = parseFloat(product.total_bulk_cost || 0) / parseFloat(product.quantity_purchased || 1);
+            inventoryValue += (quantity * unitCost);
+        });
+        
+        // Get all sales to calculate accounts receivable and cash
+        const salesData = await reports.getSalesReport({ 
+            startDate: '2000-01-01', 
+            endDate: asOfDate || new Date().toISOString().split('T')[0] 
+        });
+        const allSales = Array.isArray(salesData) ? salesData : (salesData?.data || []);
+        
+        // Calculate Cash (from sales - assuming all sales are cash for now)
+        const cash = allSales.reduce((sum, sale) => {
+            return sum + parseFloat(sale.total_amount || sale.total || 0);
+        }, 0);
+        
+        // Accounts Receivable (placeholder - can be expanded)
+        const accountsReceivable = 0;
+        
+        // Total Current Assets
+        const currentAssets = cash + inventoryValue + accountsReceivable;
+        
+        // Fixed Assets (placeholder)
+        const fixedAssets = 0;
+        
+        // Total Assets
+        const totalAssets = currentAssets + fixedAssets;
+        
+        // Liabilities (placeholder - can be expanded)
+        const currentLiabilities = 0;
+        const longTermLiabilities = 0;
+        const totalLiabilities = currentLiabilities + longTermLiabilities;
+        
+        // Equity
+        const equity = totalAssets - totalLiabilities;
+        
+        return {
+            asOfDate: asOfDate || new Date().toISOString().split('T')[0],
+            assets: {
+                current: {
+                    cash: cash,
+                    inventory: inventoryValue,
+                    accountsReceivable: accountsReceivable,
+                    total: currentAssets
+                },
+                fixed: fixedAssets,
+                total: totalAssets
+            },
+            liabilities: {
+                current: currentLiabilities,
+                longTerm: longTermLiabilities,
+                total: totalLiabilities
+            },
+            equity: equity
+        };
+    } catch (error) {
+        console.error('Error generating balance sheet:', error);
+        throw error;
+    }
+}
+
+// Generate Cash Flow Statement
+async function generateCashFlowStatement(startDate, endDate) {
+    try {
+        // Get sales data
+        const salesData = await reports.getSalesReport({ startDate, endDate });
+        const sales = Array.isArray(salesData) ? salesData : (salesData?.data || []);
+        
+        // Operating Activities - Cash from Sales
+        const cashFromSales = sales.reduce((sum, sale) => {
+            return sum + parseFloat(sale.total_amount || sale.total || 0);
+        }, 0);
+        
+        // Operating Activities - Cash paid for inventory (placeholder)
+        const cashPaidForInventory = 0;
+        
+        // Net Cash from Operating Activities
+        const netCashOperating = cashFromSales - cashPaidForInventory;
+        
+        // Investing Activities (placeholder)
+        const investingActivities = 0;
+        
+        // Financing Activities (placeholder)
+        const financingActivities = 0;
+        
+        // Net Change in Cash
+        const netChangeInCash = netCashOperating + investingActivities + financingActivities;
+        
+        return {
+            period: { startDate, endDate },
+            operating: {
+                cashFromSales: cashFromSales,
+                cashPaidForInventory: cashPaidForInventory,
+                net: netCashOperating
+            },
+            investing: investingActivities,
+            financing: financingActivities,
+            netChangeInCash: netChangeInCash
+        };
+    } catch (error) {
+        console.error('Error generating cash flow statement:', error);
+        throw error;
+    }
+}
+
+// Generate Profit & Loss Summary
+async function generateProfitLossSummary(startDate, endDate) {
+    try {
+        const incomeStatement = await generateIncomeStatement(startDate, endDate);
+        
+        return {
+            period: { startDate, endDate },
+            summary: {
+                revenue: incomeStatement.revenue.total,
+                cogs: incomeStatement.cogs.total,
+                grossProfit: incomeStatement.grossProfit.total,
+                operatingExpenses: incomeStatement.operatingExpenses.total,
+                netIncome: incomeStatement.netIncome.total
+            },
+            margins: {
+                grossProfitMargin: incomeStatement.grossProfit.margin,
+                netProfitMargin: incomeStatement.netIncome.margin
+            },
+            salesCount: incomeStatement.salesCount
+        };
+    } catch (error) {
+        console.error('Error generating profit & loss summary:', error);
+        throw error;
+    }
+}
+
+// ============================================
+// Accounting Report Rendering Functions
+// ============================================
+
+// Render Income Statement
+async function renderIncomeStatement(data) {
+    const tableHeader = document.getElementById('reportTableHeader');
+    const tableBody = document.getElementById('reportTableBody');
+    const tableFooter = document.getElementById('reportTableFooter');
+    
+    if (!tableHeader || !tableBody || !tableFooter) return;
+    
+    const shopName = await getShopName();
+    
+    tableHeader.innerHTML = `
+        <tr>
+            <th colspan="2" class="text-center bg-primary text-white py-2">
+                <strong>${shopName}</strong><br>
+                <small>INCOME STATEMENT</small>
+            </th>
+        </tr>
+        <tr>
+            <th>Description</th>
+            <th class="text-end">Amount (GH₵)</th>
+        </tr>
+    `;
+    
+    tableBody.innerHTML = `
+        <tr class="table-primary">
+            <td><strong>REVENUE</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Sales Revenue</td>
+            <td class="text-end">${formatCurrency(data.revenue?.total || 0)}</td>
+        </tr>
+        <tr class="table-info">
+            <td><strong>Total Revenue</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.revenue?.total || 0)}</strong></td>
+        </tr>
+        <tr class="table-primary">
+            <td><strong>COST OF GOODS SOLD</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Cost of Goods Sold</td>
+            <td class="text-end">${formatCurrency(data.cogs?.total || 0)}</td>
+        </tr>
+        <tr class="table-info">
+            <td><strong>Total COGS</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.cogs?.total || 0)}</strong></td>
+        </tr>
+        <tr class="table-success">
+            <td><strong>GROSS PROFIT</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.grossProfit?.total || 0)}</strong></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Gross Profit Margin</td>
+            <td class="text-end">${(data.grossProfit?.margin || 0).toFixed(2)}%</td>
+        </tr>
+        <tr class="table-primary">
+            <td><strong>OPERATING EXPENSES</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Operating Expenses</td>
+            <td class="text-end">${formatCurrency(data.operatingExpenses?.total || 0)}</td>
+        </tr>
+        <tr class="table-info">
+            <td><strong>Total Operating Expenses</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.operatingExpenses?.total || 0)}</strong></td>
+        </tr>
+        <tr class="table-warning">
+            <td><strong>NET INCOME</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.netIncome?.total || 0)}</strong></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Net Profit Margin</td>
+            <td class="text-end">${(data.netIncome?.margin || 0).toFixed(2)}%</td>
+        </tr>
+    `;
+    
+    // Reuse shopName from earlier in the function
+    tableFooter.innerHTML = `
+        <tr class="table-secondary">
+            <td><strong>${shopName}</strong> | Period: ${formatDate(data.period.startDate)} to ${formatDate(data.period.endDate)}</td>
+            <td class="text-end"><strong>Total Sales Transactions:</strong> ${data.salesCount}</td>
+        </tr>
+    `;
+}
+
+// Render Balance Sheet
+async function renderBalanceSheet(data) {
+    const tableHeader = document.getElementById('reportTableHeader');
+    const tableBody = document.getElementById('reportTableBody');
+    const tableFooter = document.getElementById('reportTableFooter');
+    
+    if (!tableHeader || !tableBody || !tableFooter) return;
+    
+    const shopName = await getShopName();
+    
+    tableHeader.innerHTML = `
+        <tr>
+            <th colspan="2" class="text-center bg-primary text-white py-2">
+                <strong>${shopName}</strong><br>
+                <small>BALANCE SHEET</small>
+            </th>
+        </tr>
+        <tr>
+            <th>Account</th>
+            <th class="text-end">Amount (GH₵)</th>
+        </tr>
+    `;
+    
+    tableBody.innerHTML = `
+        <tr class="table-primary">
+            <td><strong>ASSETS</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;"><strong>Current Assets</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 60px;">Cash</td>
+            <td class="text-end">${formatCurrency(data.assets?.current?.cash || 0)}</td>
+        </tr>
+        <tr>
+            <td style="padding-left: 60px;">Inventory</td>
+            <td class="text-end">${formatCurrency(data.assets?.current?.inventory || 0)}</td>
+        </tr>
+        <tr>
+            <td style="padding-left: 60px;">Accounts Receivable</td>
+            <td class="text-end">${formatCurrency(data.assets?.current?.accountsReceivable || 0)}</td>
+        </tr>
+        <tr class="table-info">
+            <td style="padding-left: 30px;"><strong>Total Current Assets</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.assets?.current?.total || 0)}</strong></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;"><strong>Fixed Assets</strong></td>
+            <td class="text-end">${formatCurrency(data.assets?.fixed || 0)}</td>
+        </tr>
+        <tr class="table-success">
+            <td><strong>TOTAL ASSETS</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.assets?.total || 0)}</strong></td>
+        </tr>
+        <tr class="table-primary">
+            <td><strong>LIABILITIES</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Current Liabilities</td>
+            <td class="text-end">${formatCurrency(data.liabilities?.current || 0)}</td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Long-term Liabilities</td>
+            <td class="text-end">${formatCurrency(data.liabilities?.longTerm || 0)}</td>
+        </tr>
+        <tr class="table-info">
+            <td><strong>TOTAL LIABILITIES</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.liabilities?.total || 0)}</strong></td>
+        </tr>
+        <tr class="table-warning">
+            <td><strong>EQUITY</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.equity || 0)}</strong></td>
+        </tr>
+        <tr class="table-success">
+            <td><strong>TOTAL LIABILITIES & EQUITY</strong></td>
+            <td class="text-end"><strong>${formatCurrency((data.liabilities?.total || 0) + (data.equity || 0))}</strong></td>
+        </tr>
+    `;
+    
+    // Reuse shopName from earlier in the function
+    tableFooter.innerHTML = `
+        <tr class="table-secondary">
+            <td><strong>${shopName}</strong> | As of: ${formatDate(data.asOfDate)}</td>
+            <td class="text-end"></td>
+        </tr>
+    `;
+}
+
+// Render Cash Flow Statement
+async function renderCashFlowStatement(data) {
+    const tableHeader = document.getElementById('reportTableHeader');
+    const tableBody = document.getElementById('reportTableBody');
+    const tableFooter = document.getElementById('reportTableFooter');
+    
+    if (!tableHeader || !tableBody || !tableFooter) return;
+    
+    const shopName = await getShopName();
+    
+    tableHeader.innerHTML = `
+        <tr>
+            <th colspan="2" class="text-center bg-primary text-white py-2">
+                <strong>${shopName}</strong><br>
+                <small>CASH FLOW STATEMENT</small>
+            </th>
+        </tr>
+        <tr>
+            <th>Activity</th>
+            <th class="text-end">Amount (GH₵)</th>
+        </tr>
+    `;
+    
+    tableBody.innerHTML = `
+        <tr class="table-primary">
+            <td><strong>CASH FLOW FROM OPERATING ACTIVITIES</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Cash from Sales</td>
+            <td class="text-end">${formatCurrency(data.operating?.cashFromSales || 0)}</td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Cash Paid for Inventory</td>
+            <td class="text-end">(${formatCurrency(data.operating?.cashPaidForInventory || 0)})</td>
+        </tr>
+        <tr class="table-info">
+            <td><strong>Net Cash from Operating Activities</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.operating?.net || 0)}</strong></td>
+        </tr>
+        <tr class="table-primary">
+            <td><strong>CASH FLOW FROM INVESTING ACTIVITIES</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Investing Activities</td>
+            <td class="text-end">${formatCurrency(data.investing || 0)}</td>
+        </tr>
+        <tr class="table-primary">
+            <td><strong>CASH FLOW FROM FINANCING ACTIVITIES</strong></td>
+            <td class="text-end"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 30px;">Financing Activities</td>
+            <td class="text-end">${formatCurrency(data.financing || 0)}</td>
+        </tr>
+        <tr class="table-success">
+            <td><strong>NET CHANGE IN CASH</strong></td>
+            <td class="text-end"><strong>${formatCurrency(data.netChangeInCash || 0)}</strong></td>
+        </tr>
+    `;
+    
+    // Reuse shopName from earlier in the function
+    tableFooter.innerHTML = `
+        <tr class="table-secondary">
+            <td><strong>${shopName}</strong> | Period: ${formatDate(data.period.startDate)} to ${formatDate(data.period.endDate)}</td>
+            <td class="text-end"></td>
+        </tr>
+    `;
+}
+
+// Render Profit & Loss Summary
+async function renderProfitLossSummary(data) {
+    const tableHeader = document.getElementById('reportTableHeader');
+    const tableBody = document.getElementById('reportTableBody');
+    const tableFooter = document.getElementById('reportTableFooter');
+    
+    if (!tableHeader || !tableBody || !tableFooter) return;
+    
+    const shopName = await getShopName();
+    
+    tableHeader.innerHTML = `
+        <tr>
+            <th colspan="3" class="text-center bg-primary text-white py-2">
+                <strong>${shopName}</strong><br>
+                <small>PROFIT & LOSS SUMMARY</small>
+            </th>
+        </tr>
+        <tr>
+            <th>Item</th>
+            <th class="text-end">Amount (GH₵)</th>
+            <th class="text-end">Margin (%)</th>
+        </tr>
+    `;
+    
+    const revenue = data.summary?.revenue || 0;
+    const cogs = data.summary?.cogs || 0;
+    const grossProfit = data.summary?.grossProfit || 0;
+    const operatingExpenses = data.summary?.operatingExpenses || 0;
+    const netIncome = data.summary?.netIncome || 0;
+    const grossProfitMargin = data.margins?.grossProfitMargin || 0;
+    const netProfitMargin = data.margins?.netProfitMargin || 0;
+    
+    tableBody.innerHTML = `
+        <tr class="table-primary">
+            <td><strong>Total Revenue</strong></td>
+            <td class="text-end"><strong>${formatCurrency(revenue)}</strong></td>
+            <td class="text-end">100.00%</td>
+        </tr>
+        <tr>
+            <td>Cost of Goods Sold</td>
+            <td class="text-end">${formatCurrency(cogs)}</td>
+            <td class="text-end">${revenue > 0 ? ((cogs / revenue) * 100).toFixed(2) : '0.00'}%</td>
+        </tr>
+        <tr class="table-success">
+            <td><strong>Gross Profit</strong></td>
+            <td class="text-end"><strong>${formatCurrency(grossProfit)}</strong></td>
+            <td class="text-end"><strong>${grossProfitMargin.toFixed(2)}%</strong></td>
+        </tr>
+        <tr>
+            <td>Operating Expenses</td>
+            <td class="text-end">${formatCurrency(operatingExpenses)}</td>
+            <td class="text-end">${revenue > 0 ? ((operatingExpenses / revenue) * 100).toFixed(2) : '0.00'}%</td>
+        </tr>
+        <tr class="table-warning">
+            <td><strong>Net Income</strong></td>
+            <td class="text-end"><strong>${formatCurrency(netIncome)}</strong></td>
+            <td class="text-end"><strong>${netProfitMargin.toFixed(2)}%</strong></td>
+        </tr>
+    `;
+    
+    // Reuse shopName from earlier in the function
+    tableFooter.innerHTML = `
+        <tr class="table-secondary">
+            <td><strong>${shopName}</strong> | Period: ${formatDate(data.period.startDate)} to ${formatDate(data.period.endDate)}</td>
+            <td class="text-end"><strong>Total Sales:</strong> ${data.salesCount}</td>
+            <td class="text-end"></td>
+        </tr>
+    `;
 }
 
 // Export functions that need to be available to other modules

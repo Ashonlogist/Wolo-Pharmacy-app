@@ -44,6 +44,40 @@ function setupEventListeners() {
         productSelect.addEventListener('change', (e) => updateSaleForm(e.target.value));
     }
     
+    // Payment method change - show/hide phone number field
+    const paymentMethodSelect = document.getElementById('salePaymentMethod');
+    const mobileMoneyPhoneGroup = document.getElementById('mobileMoneyPhoneGroup');
+    const customerPhoneInput = document.getElementById('saleCustomerPhone');
+    
+    if (paymentMethodSelect && mobileMoneyPhoneGroup) {
+        // Set up initial state
+        const handlePaymentMethodChange = () => {
+            if (paymentMethodSelect.value === 'mobile_money') {
+                mobileMoneyPhoneGroup.style.display = 'block';
+                if (customerPhoneInput) {
+                    customerPhoneInput.required = true;
+                    customerPhoneInput.focus();
+                }
+            } else {
+                mobileMoneyPhoneGroup.style.display = 'none';
+                if (customerPhoneInput) {
+                    customerPhoneInput.required = false;
+                    customerPhoneInput.value = '';
+                }
+            }
+        };
+        
+        paymentMethodSelect.addEventListener('change', handlePaymentMethodChange);
+        
+        // Also handle when the items card is created dynamically
+        if (paymentMethodSelect.hasAttribute('data-listener-attached')) {
+            // Already has listener, just update the state
+            handlePaymentMethodChange();
+        } else {
+            paymentMethodSelect.setAttribute('data-listener-attached', 'true');
+        }
+    }
+    
     // Quantity input
     const quantityInput = document.getElementById('saleQuantity');
     if (quantityInput) {
@@ -273,10 +307,15 @@ function updateSaleItemsList() {
                             <option value="mobile_money">Mobile Money</option>
                             <option value="other">Other</option>
                         </select>
+                        <div id="mobileMoneyPhoneGroup" style="display: none;" class="mb-3">
+                            <label for="saleCustomerPhone" class="form-label">Customer Phone Number *</label>
+                            <input type="tel" class="form-control" id="saleCustomerPhone" placeholder="e.g., 0244123456 or +233244123456">
+                            <small class="form-text text-muted">Required for mobile money payments</small>
+                        </div>
                         <label for="saleCustomerName" class="form-label">Customer Name (Optional)</label>
                         <input type="text" class="form-control mb-3" id="saleCustomerName" placeholder="Enter customer name">
                         <button type="button" class="btn btn-success w-100" id="completeSaleBtn">
-                            <i class="bi bi-check-circle me-2"></i>Complete Sale
+                            <i class="bi bi-cart-check me-2"></i>Checkout & Print Receipt
                         </button>
                     </div>
                 </div>
@@ -324,6 +363,37 @@ function updateSaleItemsList() {
             completeBtn.setAttribute('data-listener-attached', 'true');
             completeBtn.addEventListener('click', completeSale);
         }
+    }
+    
+    // Re-attach payment method change listener (for phone number field)
+    const paymentMethodSelect = document.getElementById('salePaymentMethod');
+    const mobileMoneyPhoneGroup = document.getElementById('mobileMoneyPhoneGroup');
+    const customerPhoneInput = document.getElementById('saleCustomerPhone');
+    
+    if (paymentMethodSelect && mobileMoneyPhoneGroup) {
+        // Remove old listener by cloning
+        const newSelect = paymentMethodSelect.cloneNode(true);
+        paymentMethodSelect.parentNode.replaceChild(newSelect, paymentMethodSelect);
+        
+        const handlePaymentMethodChange = () => {
+            if (newSelect.value === 'mobile_money') {
+                mobileMoneyPhoneGroup.style.display = 'block';
+                if (customerPhoneInput) {
+                    customerPhoneInput.required = true;
+                    setTimeout(() => customerPhoneInput.focus(), 100);
+                }
+            } else {
+                mobileMoneyPhoneGroup.style.display = 'none';
+                if (customerPhoneInput) {
+                    customerPhoneInput.required = false;
+                    customerPhoneInput.value = '';
+                }
+            }
+        };
+        
+        newSelect.addEventListener('change', handlePaymentMethodChange);
+        // Set initial state
+        handlePaymentMethodChange();
     }
     
     // Add event listeners for remove buttons (remove old listeners first to prevent duplicates)
@@ -399,10 +469,32 @@ async function completeSale() {
     
     const paymentMethod = document.getElementById('salePaymentMethod')?.value || 'cash';
     const customerName = document.getElementById('saleCustomerName')?.value || '';
+    const customerPhone = document.getElementById('saleCustomerPhone')?.value || '';
     const notes = document.getElementById('saleNotes')?.value || '';
     
+    // Validate phone number for mobile money
+    if (paymentMethod === 'mobile_money' && !customerPhone.trim()) {
+        showToast('Please enter customer phone number for mobile money payment', 'warning');
+        document.getElementById('saleCustomerPhone')?.focus();
+        return;
+    }
+    
+    // Validate phone number format (basic validation)
+    if (paymentMethod === 'mobile_money' && customerPhone.trim()) {
+        const phoneRegex = /^(\+?233|0)?[0-9]{9}$/;
+        const cleanPhone = customerPhone.trim().replace(/\s+/g, '');
+        if (!phoneRegex.test(cleanPhone)) {
+            showToast('Please enter a valid phone number (e.g., 0244123456 or +233244123456)', 'warning');
+            document.getElementById('saleCustomerPhone')?.focus();
+            return;
+        }
+    }
+    
     try {
-        const customerInfo = customerName ? { name: customerName } : null;
+        const customerInfo = customerName || customerPhone ? { 
+            name: customerName || 'Customer',
+            phone: customerPhone.trim() || null
+        } : null;
         
         // Map sale items and validate productIds
         const saleItems = currentSaleItems.map(item => {
@@ -438,6 +530,18 @@ async function completeSale() {
         if (result && result.success) {
             showToast('Sale recorded successfully!', 'success');
             
+            // Store sale data for receipt before clearing
+            const saleDataForReceipt = {
+                invoiceNumber: result.data?.invoice_number || `INV-${Date.now()}`,
+                saleDate: new Date(),
+                items: [...currentSaleItems],
+                paymentMethod,
+                customerName,
+                customerPhone: customerPhone.trim() || null,
+                notes,
+                total: currentSaleItems.reduce((sum, item) => sum + item.total, 0)
+            };
+            
             // Clear current sale
             currentSaleItems = [];
             updateSaleItemsList();
@@ -466,6 +570,9 @@ async function completeSale() {
                     console.warn('Could not refresh dashboard:', e);
                 }
             }
+            
+            // Automatically print receipt after successful sale
+            await printReceiptForSale(saleDataForReceipt);
         } else {
             throw new Error(result?.error || 'Failed to record sale');
         }
@@ -547,92 +654,321 @@ function viewSaleDetails(saleId) {
     // You can implement this function based on your requirements
 }
 
-// Print receipt
+// Print receipt for a completed sale
+async function printReceiptForSale(saleData) {
+    try {
+        // Get shop information from settings
+        const { settings } = await import('../core/api.js');
+        const shopName = (await settings.get('shop_name'))?.value || (await settings.get('company_name'))?.value || 'Wolo Pharmacy';
+        const shopPhone = (await settings.get('shop_phone'))?.value || (await settings.get('company_phone'))?.value || '';
+        const shopEmail = (await settings.get('shop_email'))?.value || (await settings.get('company_email'))?.value || '';
+        const shopAddress = (await settings.get('shop_address'))?.value || (await settings.get('company_address'))?.value || '';
+        
+        const printWindow = window.open('', '_blank');
+        
+        // Format date and time
+        const saleDate = saleData.saleDate instanceof Date ? saleData.saleDate : new Date(saleData.saleDate);
+        const dateStr = saleDate.toLocaleDateString('en-GB', { 
+            day: '2-digit', 
+            month: 'short', 
+            year: 'numeric' 
+        });
+        const timeStr = saleDate.toLocaleTimeString('en-GB', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        // Generate receipt HTML with professional formatting
+        let receiptHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Receipt - ${saleData.invoiceNumber}</title>
+            <style>
+                @media print {
+                    @page {
+                        size: 80mm auto;
+                        margin: 0;
+                    }
+                    body {
+                        margin: 0;
+                        padding: 5mm;
+                    }
+                }
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: 'Courier New', monospace;
+                    font-size: 11px;
+                    line-height: 1.4;
+                    color: #000;
+                    background: #fff;
+                    padding: 10px;
+                    max-width: 300px;
+                    margin: 0 auto;
+                }
+                .receipt {
+                    width: 100%;
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 15px;
+                    padding-bottom: 10px;
+                    border-bottom: 2px dashed #000;
+                }
+                .header h1 {
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                }
+                .header p {
+                    font-size: 10px;
+                    margin: 2px 0;
+                }
+                .info-section {
+                    margin: 10px 0;
+                    padding: 8px 0;
+                    border-bottom: 1px dashed #ccc;
+                }
+                .info-row {
+                    display: flex;
+                    justify-content: space-between;
+                    margin: 3px 0;
+                    font-size: 10px;
+                }
+                .info-label {
+                    font-weight: bold;
+                }
+                .items-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 10px 0;
+                }
+                .items-table thead {
+                    border-top: 1px dashed #000;
+                    border-bottom: 1px dashed #000;
+                }
+                .items-table th {
+                    text-align: left;
+                    padding: 5px 0;
+                    font-size: 10px;
+                    font-weight: bold;
+                }
+                .items-table th.qty,
+                .items-table th.price,
+                .items-table th.total {
+                    text-align: right;
+                }
+                .items-table td {
+                    padding: 4px 0;
+                    font-size: 10px;
+                    border-bottom: 1px dotted #ccc;
+                }
+                .items-table td.qty,
+                .items-table td.price,
+                .items-table td.total {
+                    text-align: right;
+                }
+                .item-name {
+                    word-wrap: break-word;
+                    max-width: 120px;
+                }
+                .totals {
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    border-top: 2px dashed #000;
+                }
+                .total-row {
+                    display: flex;
+                    justify-content: space-between;
+                    margin: 5px 0;
+                    font-size: 12px;
+                }
+                .grand-total {
+                    font-weight: bold;
+                    font-size: 14px;
+                    margin-top: 8px;
+                    padding-top: 8px;
+                    border-top: 2px solid #000;
+                }
+                .payment-info {
+                    margin: 10px 0;
+                    padding: 8px 0;
+                    border-top: 1px dashed #ccc;
+                    border-bottom: 1px dashed #ccc;
+                    font-size: 10px;
+                }
+                .footer {
+                    text-align: center;
+                    margin-top: 15px;
+                    padding-top: 10px;
+                    border-top: 1px dashed #000;
+                    font-size: 9px;
+                }
+                .footer p {
+                    margin: 3px 0;
+                }
+                .divider {
+                    border-top: 1px dashed #000;
+                    margin: 8px 0;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="receipt">
+                <div class="header">
+                    <h1>${shopName}</h1>
+                    ${shopAddress ? `<p>${shopAddress}</p>` : ''}
+                    ${shopPhone ? `<p>Tel: ${shopPhone}</p>` : ''}
+                    ${shopEmail ? `<p>${shopEmail}</p>` : ''}
+                </div>
+                
+                <div class="info-section">
+                    <div class="info-row">
+                        <span class="info-label">Invoice:</span>
+                        <span>${saleData.invoiceNumber}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Date:</span>
+                        <span>${dateStr}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Time:</span>
+                        <span>${timeStr}</span>
+                    </div>
+                    ${saleData.customerName ? `
+                    <div class="info-row">
+                        <span class="info-label">Customer:</span>
+                        <span>${saleData.customerName}</span>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th class="qty">Qty</th>
+                            <th class="price">Price</th>
+                            <th class="total">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        // Add items
+        saleData.items.forEach(item => {
+            receiptHtml += `
+                        <tr>
+                            <td class="item-name">${item.name}</td>
+                            <td class="qty">${item.quantity}</td>
+                            <td class="price">GH₵${item.unitPrice.toFixed(2)}</td>
+                            <td class="total">GH₵${item.total.toFixed(2)}</td>
+                        </tr>
+            `;
+        });
+        
+        // Calculate totals
+        const subtotal = saleData.total;
+        const grandTotal = subtotal;
+        
+        // Add totals and footer
+        receiptHtml += `
+                    </tbody>
+                </table>
+                
+                <div class="totals">
+                    <div class="total-row">
+                        <span>Subtotal:</span>
+                        <span>GH₵${subtotal.toFixed(2)}</span>
+                    </div>
+                    <div class="total-row grand-total">
+                        <span>TOTAL:</span>
+                        <span>GH₵${grandTotal.toFixed(2)}</span>
+                    </div>
+                </div>
+                
+                <div class="payment-info">
+                    <div class="info-row">
+                        <span class="info-label">Payment Method:</span>
+                        <span>${saleData.paymentMethod.toUpperCase()}</span>
+                    </div>
+                    ${saleData.paymentMethod === 'mobile_money' && saleData.customerPhone ? `
+                    <div class="info-row">
+                        <span class="info-label">Phone Number:</span>
+                        <span>${saleData.customerPhone}</span>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                ${saleData.notes ? `
+                <div class="info-section">
+                    <div class="info-row">
+                        <span class="info-label">Notes:</span>
+                        <span>${saleData.notes}</span>
+                    </div>
+                </div>
+                ` : ''}
+                
+                <div class="footer">
+                    <p>━━━━━━━━━━━━━━━━━━━━</p>
+                    <p>Thank you for your purchase!</p>
+                    <p>Please come again</p>
+                    <p>━━━━━━━━━━━━━━━━━━━━</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+        
+        // Write the receipt to the new window and print
+        printWindow.document.write(receiptHtml);
+        printWindow.document.close();
+        printWindow.focus();
+        
+        // Wait for content to load before printing
+        setTimeout(() => {
+            printWindow.print();
+            // Optionally close the window after printing (uncomment if desired)
+            // setTimeout(() => printWindow.close(), 500);
+        }, 500);
+        
+    } catch (error) {
+        console.error('Error printing receipt:', error);
+        showToast('Error generating receipt: ' + error.message, 'warning');
+    }
+}
+
+// Print receipt (legacy function for manual printing)
 function printReceipt() {
     if (currentSaleItems.length === 0) {
         showToast('No items in the current sale', 'warning');
         return;
     }
     
-    // You can implement receipt printing logic here
-    // This is a placeholder for the actual implementation
-    const printWindow = window.open('', '_blank');
+    const paymentMethod = document.getElementById('salePaymentMethod')?.value || 'cash';
+    const customerName = document.getElementById('saleCustomerName')?.value || '';
+    const customerPhone = document.getElementById('saleCustomerPhone')?.value || '';
+    const notes = document.getElementById('saleNotes')?.value || '';
+    const total = currentSaleItems.reduce((sum, item) => sum + item.total, 0);
     
-    // Generate receipt HTML
-    let receiptHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Receipt</title>
-            <style>
-                body { font-family: Arial, sans-serif; font-size: 12px; }
-                .receipt { width: 300px; margin: 0 auto; padding: 10px; }
-                .header { text-align: center; margin-bottom: 10px; }
-                .items { width: 100%; border-collapse: collapse; margin: 10px 0; }
-                .items th { text-align: left; border-bottom: 1px dashed #000; padding: 5px 0; }
-                .items td { padding: 3px 0; }
-                .total { text-align: right; font-weight: bold; margin-top: 10px; }
-                .footer { text-align: center; margin-top: 20px; font-size: 10px; }
-            </style>
-        </head>
-        <body>
-            <div class="receipt">
-                <div class="header">
-                    <h2>Wolo Pharmacy</h2>
-                    <p>${new Date().toLocaleString()}</p>
-                    <p>Thank you for your purchase!</p>
-                </div>
-                <table class="items">
-                    <tr>
-                        <th>Item</th>
-                        <th>Qty</th>
-                        <th>Price</th>
-                        <th>Total</th>
-                    </tr>
-    `;
-    
-    // Add items
-    currentSaleItems.forEach(item => {
-        receiptHtml += `
-            <tr>
-                <td>${item.name}</td>
-                <td>${item.quantity}</td>
-                <td>GH₵${item.unitPrice.toFixed(2)}</td>
-                <td>GH₵${item.total.toFixed(2)}</td>
-            </tr>
-        `;
-    });
-    
-    // Calculate total
-    const grandTotal = currentSaleItems.reduce((sum, item) => sum + item.total, 0);
-    
-    // Add total and footer
-    receiptHtml += `
-                </table>
-                <div class="total">
-                    Total: GH₵${grandTotal.toFixed(2)}
-                </div>
-                <div class="footer">
-                    <p>Thank you for shopping with us!</p>
-                    <p>www.wolopharmacy.com</p>
-                </div>
-            </div>
-        </body>
-        </html>
-    `;
-    
-    // Write the receipt to the new window and print
-    printWindow.document.write(receiptHtml);
-    printWindow.document.close();
-    printWindow.focus();
-    
-    // Wait for content to load before printing
-    printWindow.onload = function() {
-        setTimeout(() => {
-            printWindow.print();
-            // printWindow.close(); // Uncomment to close after printing
-        }, 250);
+    const saleData = {
+        invoiceNumber: `INV-${Date.now()}`,
+        saleDate: new Date(),
+        items: currentSaleItems,
+        paymentMethod,
+        customerName,
+        customerPhone: customerPhone.trim() || null,
+        notes,
+        total
     };
+    
+    printReceiptForSale(saleData);
 }
 
 // Export functions that need to be available globally
@@ -644,3 +980,4 @@ window.loadTodaysSales = loadTodaysSales;
 window.loadSalesByDateRange = loadSalesByDateRange;
 window.viewSaleDetails = viewSaleDetails;
 window.printReceipt = printReceipt;
+window.populateProductDropdown = populateProductDropdown;

@@ -53,6 +53,10 @@ let formState = {
     variantOptions: []
 };
 
+// Track loading state to prevent multiple simultaneous calls
+let isLoadingInitialData = false;
+let isApplicationInitialized = false;
+
 // Initialize the product form
 async function initializeForm() {
     // Show loading state
@@ -110,6 +114,13 @@ async function initializeForm() {
 
 // Load initial data like categories, suppliers, etc.
 async function loadInitialData() {
+    // Prevent multiple simultaneous calls
+    if (isLoadingInitialData) {
+        console.log('loadInitialData already in progress, skipping...');
+        return;
+    }
+    
+    isLoadingInitialData = true;
     try {
         showLoading(true, 'initial-data');
         console.log('Loading initial data...');
@@ -181,6 +192,10 @@ async function loadInitialData() {
     } catch (error) {
         console.error('Error loading initial data:', error);
         throw error;
+    } finally {
+        // Always hide loading state and reset flag
+        showLoading(false, 'initial-data');
+        isLoadingInitialData = false;
     }
 }
 
@@ -1658,6 +1673,14 @@ function calculatePrices() {
 
 // Initialize the application when the DOM is fully loaded
 function initializeApplication() {
+    // Prevent multiple initializations
+    if (isApplicationInitialized) {
+        console.log('Application already initialized, skipping...');
+        return;
+    }
+    
+    isApplicationInitialized = true;
+    
     try {
         // Show loading state
         showLoading(true, 'app-loading');
@@ -1682,6 +1705,7 @@ function initializeApplication() {
             window.validateField = validateField;
             window.calculatePrices = calculatePrices;
             window.removeImage = removeImage;
+            window.loadInitialData = loadInitialData;
             window.setMainImage = setMainImage;
             window.addVariantOption = addVariantOption;
             window.generateVariants = generateVariants;

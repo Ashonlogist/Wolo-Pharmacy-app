@@ -50,6 +50,10 @@ const cache = {
 let salesChart = null;
 let productsChart = null;
 
+// Debounce mechanism to prevent rapid refresh calls
+let refreshTimeout = null;
+let isRefreshing = false;
+
 // Initialize dashboard when the module loads
 (async function initDashboard() {
     console.log('Initializing dashboard...');
@@ -121,10 +125,19 @@ function initializeDashboard() {
 
 // Initialize event listeners
 function initializeEventListeners() {
-    // Refresh button
+    // Refresh button - check if listener already exists to prevent duplicates
     const refreshBtn = document.getElementById('refreshDashboardBtn') || document.getElementById('refreshDashboard');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', () => refreshDashboard().catch(handleDashboardError));
+    if (refreshBtn && !refreshBtn.hasAttribute('data-listener-attached')) {
+        refreshBtn.setAttribute('data-listener-attached', 'true');
+        refreshBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                await refreshDashboard(true); // Force refresh on button click
+            } catch (error) {
+                handleDashboardError(error);
+            }
+        });
     }
     
     // Date range filter
@@ -181,6 +194,19 @@ function initializeEventListeners() {
 
 // Refresh dashboard data with cache and error handling
 async function refreshDashboard(forceRefresh = false) {
+    // Prevent multiple simultaneous refresh calls
+    if (isRefreshing) {
+        console.log('Refresh already in progress, skipping...');
+        return;
+    }
+    
+    // Clear any pending refresh
+    if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+        refreshTimeout = null;
+    }
+    
+    isRefreshing = true;
     const loadingKey = 'dashboard-refresh';
     showLoading(true, loadingKey);
     
@@ -239,6 +265,7 @@ async function refreshDashboard(forceRefresh = false) {
     } catch (error) {
         handleDashboardError(error);
     } finally {
+        isRefreshing = false;
         showLoading(false, loadingKey);
     }
 }
@@ -513,10 +540,77 @@ function getTopProductsBySales(products, limit = 5) {
 // Handle chart type change
 function updateChartType() {
     const chartType = document.getElementById('chartType')?.value;
-    if (salesChart && chartType) {
-        salesChart.config.type = chartType;
-        salesChart.update();
+    if (!chartType || !window.salesChart) {
+        return;
     }
+    
+    // Get current chart data
+    const currentData = window.salesChart.data;
+    const currentOptions = window.salesChart.options;
+    
+    // Destroy existing chart
+    if (window.salesChart && typeof window.salesChart.destroy === 'function') {
+        window.salesChart.destroy();
+    }
+    
+    // Get canvas context
+    const salesCtx = document.getElementById('salesChart')?.getContext('2d');
+    if (!salesCtx) {
+        console.warn('Sales chart canvas not found');
+        return;
+    }
+    
+    // Create new chart with the selected type
+    const chartConfig = {
+        type: chartType,
+        data: currentData,
+        options: { ...currentOptions }
+    };
+    
+    // Adjust options based on chart type
+    if (chartType === 'bar') {
+        // Bar chart specific options
+        chartConfig.options.scales = {
+            ...chartConfig.options.scales,
+            x: {
+                ...chartConfig.options.scales?.x,
+                grid: {
+                    display: false
+                }
+            }
+        };
+        // Remove line-specific properties from dataset
+        if (chartConfig.data.datasets && chartConfig.data.datasets[0]) {
+            delete chartConfig.data.datasets[0].borderColor;
+            delete chartConfig.data.datasets[0].tension;
+            delete chartConfig.data.datasets[0].fill;
+            delete chartConfig.data.datasets[0].borderWidth;
+            delete chartConfig.data.datasets[0].pointRadius;
+            delete chartConfig.data.datasets[0].pointHoverRadius;
+            // Add bar-specific properties
+            chartConfig.data.datasets[0].backgroundColor = 'rgba(75, 192, 192, 0.8)';
+            chartConfig.data.datasets[0].borderColor = 'rgba(75, 192, 192, 1)';
+            chartConfig.data.datasets[0].borderWidth = 1;
+        }
+    } else if (chartType === 'line') {
+        // Line chart specific options
+        if (chartConfig.data.datasets && chartConfig.data.datasets[0]) {
+            // Restore line-specific properties
+            chartConfig.data.datasets[0].borderColor = 'rgba(75, 192, 192, 1)';
+            chartConfig.data.datasets[0].backgroundColor = 'rgba(75, 192, 192, 0.2)';
+            chartConfig.data.datasets[0].tension = 0.1;
+            chartConfig.data.datasets[0].fill = true;
+            chartConfig.data.datasets[0].borderWidth = 2;
+            chartConfig.data.datasets[0].pointRadius = 3;
+            chartConfig.data.datasets[0].pointHoverRadius = 5;
+        }
+    }
+    
+    // Create new chart
+    window.salesChart = new Chart(salesCtx, chartConfig);
+    
+    // Update the chart
+    window.salesChart.update();
 }
 
 // Handle view sale details
@@ -958,21 +1052,36 @@ function initializeCharts() {
             }
         }
 
+        // Get initial chart type from selector
+        const chartTypeSelect = document.getElementById('chartType');
+        const initialChartType = chartTypeSelect?.value || 'line';
+        
+        // Configure dataset based on chart type
+        const isBarChart = initialChartType === 'bar';
+        const datasetConfig = {
+            label: 'Sales',
+            data: []
+        };
+        
+        if (isBarChart) {
+            datasetConfig.backgroundColor = 'rgba(75, 192, 192, 0.8)';
+            datasetConfig.borderColor = 'rgba(75, 192, 192, 1)';
+            datasetConfig.borderWidth = 1;
+        } else {
+            datasetConfig.borderColor = 'rgba(75, 192, 192, 1)';
+            datasetConfig.backgroundColor = 'rgba(75, 192, 192, 0.2)';
+            datasetConfig.tension = 0.1;
+            datasetConfig.fill = true;
+            datasetConfig.borderWidth = 2;
+            datasetConfig.pointRadius = 3;
+            datasetConfig.pointHoverRadius = 5;
+        }
+
         window.salesChart = new Chart(salesCtx, {
-            type: 'line',
+            type: initialChartType,
             data: {
                 labels: [],
-                datasets: [{
-                    label: 'Daily Sales',
-                    data: [],
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                    tension: 0.1,
-                    fill: true,
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    pointHoverRadius: 5
-                }]
+                datasets: [datasetConfig]
             },
             options: {
                 responsive: true,
@@ -1013,7 +1122,7 @@ function initializeCharts() {
                         usePointStyle: true,
                         callbacks: {
                             label: function(context) {
-                                return `$${context.parsed.y.toFixed(2)}`;
+                                return `GH₵${context.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                             }
                         }
                     }
@@ -1026,7 +1135,7 @@ function initializeCharts() {
                         },
                         ticks: {
                             callback: function(value) {
-                                return '$' + value.toLocaleString();
+                                return 'GH₵' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                             }
                         }
                     },
@@ -1090,6 +1199,10 @@ function updateCharts(salesData = [], products = []) {
         productsChart: document.getElementById('productsChart')
     };
     
+    // Get time grouping selection
+    const timeGroupingSelect = document.getElementById('timeGrouping');
+    const timeGrouping = timeGroupingSelect?.value || 'day';
+    
     // Show placeholder if no data
     const showNoDataPlaceholder = () => {
         Object.values(chartContainers).forEach(container => {
@@ -1110,49 +1223,274 @@ function updateCharts(salesData = [], products = []) {
         return;
     }
     
-    // Process sales data for daily aggregation
-    const dailySales = {};
+    // Process sales data based on time grouping
     const validSalesData = salesData.filter(sale => sale && typeof sale === 'object');
+    
+    // Handle "per sale" view separately - each sale is a separate data point
+    if (timeGrouping === 'sale') {
+        // Sort sales by date/time
+        validSalesData.sort((a, b) => {
+            const dateA = new Date(a.sale_date || a.saleDate || a.created_at || a.date || 0);
+            const dateB = new Date(b.sale_date || b.saleDate || b.created_at || b.date || 0);
+            return dateA - dateB;
+        });
+        
+        // Create data points for each sale
+        const salesValues = validSalesData.map(sale => {
+            return parseFloat(sale.total_amount || sale.total || sale.amount || 0);
+        });
+        
+        const formattedLabels = validSalesData.map((sale, index) => {
+            try {
+                const saleDateTime = sale.sale_date || sale.saleDate || sale.created_at || sale.date || new Date().toISOString();
+                const saleDate = new Date(saleDateTime);
+                const invoiceNumber = sale.invoice_number || sale.invoiceNumber || `Sale #${index + 1}`;
+                const timeStr = saleDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                const dateStr = saleDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                return `${invoiceNumber} (${dateStr} ${timeStr})`;
+            } catch (e) {
+                return `Sale #${index + 1}`;
+            }
+        });
+        
+        // Get current chart type
+        const chartTypeSelect = document.getElementById('chartType');
+        const chartType = chartTypeSelect?.value || 'line';
+        
+        // Update sales chart if it exists
+        if (window.salesChart) {
+            try {
+                // Check if chart type matches, if not recreate chart
+                if (window.salesChart.config.type !== chartType) {
+                    // Chart type changed, need to recreate
+                    updateChartType();
+                    // Wait a bit for chart to be recreated, then update data
+                    setTimeout(() => {
+                        if (window.salesChart && window.salesChart.data && window.salesChart.data.datasets?.[0]) {
+                            window.salesChart.data.labels = formattedLabels;
+                            window.salesChart.data.datasets[0].data = salesValues;
+                            window.salesChart.data.datasets[0].label = 'Sales Per Transaction';
+                            
+                            // Update chart title if available
+                            if (window.salesChart.options?.plugins?.title) {
+                                window.salesChart.options.plugins.title.text = 'Sales Per Transaction';
+                            }
+                            
+                            window.salesChart.update();
+                        }
+                    }, 100);
+                } else {
+                    // Same chart type, just update data
+                    if (window.salesChart.data && window.salesChart.data.datasets?.[0]) {
+                        window.salesChart.data.labels = formattedLabels;
+                        window.salesChart.data.datasets[0].data = salesValues;
+                        window.salesChart.data.datasets[0].label = 'Sales Per Transaction';
+                        
+                        // Update chart title if available
+                        if (window.salesChart.options?.plugins?.title) {
+                            window.salesChart.options.plugins.title.text = 'Sales Per Transaction';
+                        }
+                        
+                        window.salesChart.update('none');
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating sales chart:', error);
+                showToast('Error updating sales chart', 'danger');
+            }
+        }
+        
+        // Continue to products chart update
+        if (window.productsChart && Array.isArray(products) && products.length > 0) {
+            try {
+                const topProducts = [...products]
+                    .filter(p => p && typeof p === 'object')
+                    .sort((a, b) => (parseInt(b.quantitySold) || 0) - (parseInt(a.quantitySold) || 0))
+                    .slice(0, 5);
+                
+                if (topProducts.length > 0 && window.productsChart.data?.datasets?.[0]) {
+                    window.productsChart.data.labels = topProducts.map(p => p.name || 'Unknown');
+                    window.productsChart.data.datasets[0].data = topProducts.map(p => parseInt(p.quantitySold) || 0);
+                    window.productsChart.update();
+                }
+            } catch (error) {
+                console.error('Error updating products chart:', error);
+            }
+        }
+        
+        return; // Exit early for per sale view
+    }
+    
+    // For grouped views (hour, day, week, month) - group sales by time period
+    const groupedSales = {};
     
     validSalesData.forEach(sale => {
         try {
-            // Get sale date - try multiple field names
-            const saleDate = sale.sale_date || sale.saleDate || sale.created_at || sale.date || new Date().toISOString();
-            const dateKey = saleDate.split('T')[0]; // Get YYYY-MM-DD format
+            // Get sale date/time - try multiple field names
+            const saleDateTime = sale.sale_date || sale.saleDate || sale.created_at || sale.date || new Date().toISOString();
+            const saleDate = new Date(saleDateTime);
             
-            if (!dailySales[dateKey]) {
-                dailySales[dateKey] = 0;
+            if (isNaN(saleDate.getTime())) {
+                console.warn('Invalid date for sale:', sale);
+                return;
+            }
+            
+            let dateKey = '';
+            let labelFormat = {};
+            
+            // Group by selected time period
+            switch(timeGrouping) {
+                case 'hour':
+                    // Group by hour (YYYY-MM-DD HH:00)
+                    dateKey = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}-${String(saleDate.getDate()).padStart(2, '0')} ${String(saleDate.getHours()).padStart(2, '0')}:00`;
+                    labelFormat = { month: 'short', day: 'numeric', hour: '2-digit' };
+                    break;
+                case 'day':
+                    // Group by day (YYYY-MM-DD)
+                    dateKey = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}-${String(saleDate.getDate()).padStart(2, '0')}`;
+                    labelFormat = { month: 'short', day: 'numeric' };
+                    break;
+                case 'week':
+                    // Group by week (YYYY-MM-DD of week start)
+                    const weekStart = new Date(saleDate);
+                    weekStart.setDate(saleDate.getDate() - saleDate.getDay()); // Start of week (Sunday)
+                    weekStart.setHours(0, 0, 0, 0); // Normalize to start of day
+                    dateKey = `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`;
+                    labelFormat = { month: 'short', day: 'numeric' };
+                    break;
+                case 'month':
+                    // Group by month (YYYY-MM)
+                    dateKey = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}`;
+                    labelFormat = { month: 'short', year: 'numeric' };
+                    break;
+                default:
+                    // Default to daily
+                    dateKey = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}-${String(saleDate.getDate()).padStart(2, '0')}`;
+                    labelFormat = { month: 'short', day: 'numeric' };
+            }
+            
+            if (!groupedSales[dateKey]) {
+                groupedSales[dateKey] = {
+                    total: 0,
+                    count: 0,
+                    date: saleDate
+                };
             }
             
             // Add sale total - try multiple field names
             const total = parseFloat(sale.total_amount || sale.total || sale.amount || 0);
-            dailySales[dateKey] += total;
+            groupedSales[dateKey].total += total;
+            groupedSales[dateKey].count += 1;
         } catch (e) {
             console.error('Error processing sale:', sale, e);
         }
     });
     
-    // Sort dates
-    const sortedDates = Object.keys(dailySales).sort();
-    const salesValues = sortedDates.map(date => dailySales[date]);
+    // Sort by date
+    const sortedKeys = Object.keys(groupedSales).sort((a, b) => {
+        return groupedSales[a].date - groupedSales[b].date;
+    });
     
-    // Format dates for display
-    const formattedDates = sortedDates.map(date => {
+    const salesValues = sortedKeys.map(key => groupedSales[key].total);
+    const salesCounts = sortedKeys.map(key => groupedSales[key].count);
+    
+    // Format labels for display based on time grouping
+    const formattedLabels = sortedKeys.map(key => {
         try {
-            const d = new Date(date);
-            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const date = groupedSales[key].date;
+            switch(timeGrouping) {
+                case 'hour':
+                    return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                case 'day':
+                    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                case 'week':
+                    const weekStartDate = new Date(date);
+                    weekStartDate.setDate(date.getDate() - date.getDay());
+                    weekStartDate.setHours(0, 0, 0, 0);
+                    const weekEndDate = new Date(weekStartDate);
+                    weekEndDate.setDate(weekStartDate.getDate() + 6);
+                    return `${weekStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                case 'month':
+                    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                default:
+                    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
         } catch (e) {
-            return date;
+            return key;
         }
     });
+    
+    // Get label text based on time grouping
+    const labelText = {
+        'hour': 'Hourly Sales',
+        'day': 'Daily Sales',
+        'week': 'Weekly Sales',
+        'month': 'Monthly Sales'
+    }[timeGrouping] || 'Sales';
+    
+    // Get current chart type
+    const chartTypeSelect = document.getElementById('chartType');
+    const chartType = chartTypeSelect?.value || 'line';
     
     // Update sales chart if it exists
     if (window.salesChart) {
         try {
-            if (window.salesChart.data && window.salesChart.data.datasets?.[0]) {
-                window.salesChart.data.labels = formattedDates;
-                window.salesChart.data.datasets[0].data = salesValues;
-                window.salesChart.update('none'); // Update without animation for performance
+            // Check if chart type matches, if not recreate chart
+            if (window.salesChart.config.type !== chartType) {
+                // Chart type changed, need to recreate
+                updateChartType();
+                // Wait a bit for chart to be recreated, then update data
+                setTimeout(() => {
+                    if (window.salesChart && window.salesChart.data && window.salesChart.data.datasets?.[0]) {
+                        window.salesChart.data.labels = formattedLabels;
+                        window.salesChart.data.datasets[0].data = salesValues;
+                        window.salesChart.data.datasets[0].label = labelText;
+                        
+                        // Update chart title if available
+                        if (window.salesChart.options?.plugins?.title) {
+                            window.salesChart.options.plugins.title.text = labelText;
+                        }
+                        
+                        window.salesChart.update();
+                    }
+                }, 100);
+            } else {
+                // Same chart type, just update data
+                if (window.salesChart.data && window.salesChart.data.datasets?.[0]) {
+                    window.salesChart.data.labels = formattedLabels;
+                    window.salesChart.data.datasets[0].data = salesValues;
+                    window.salesChart.data.datasets[0].label = labelText;
+                    
+                    // Update chart title if available
+                    if (window.salesChart.options?.plugins?.title) {
+                        window.salesChart.options.plugins.title.text = labelText;
+                    }
+                    
+                    // Update dataset properties based on chart type
+                    if (chartType === 'bar') {
+                        if (!window.salesChart.data.datasets[0].backgroundColor || window.salesChart.data.datasets[0].fill) {
+                            window.salesChart.data.datasets[0].backgroundColor = 'rgba(75, 192, 192, 0.8)';
+                            window.salesChart.data.datasets[0].borderColor = 'rgba(75, 192, 192, 1)';
+                            window.salesChart.data.datasets[0].borderWidth = 1;
+                            window.salesChart.data.datasets[0].fill = false;
+                            delete window.salesChart.data.datasets[0].tension;
+                            delete window.salesChart.data.datasets[0].pointRadius;
+                            delete window.salesChart.data.datasets[0].pointHoverRadius;
+                        }
+                    } else if (chartType === 'line') {
+                        if (!window.salesChart.data.datasets[0].borderColor || !window.salesChart.data.datasets[0].fill) {
+                            window.salesChart.data.datasets[0].borderColor = 'rgba(75, 192, 192, 1)';
+                            window.salesChart.data.datasets[0].backgroundColor = 'rgba(75, 192, 192, 0.2)';
+                            window.salesChart.data.datasets[0].tension = 0.1;
+                            window.salesChart.data.datasets[0].fill = true;
+                            window.salesChart.data.datasets[0].borderWidth = 2;
+                            window.salesChart.data.datasets[0].pointRadius = 3;
+                            window.salesChart.data.datasets[0].pointHoverRadius = 5;
+                        }
+                    }
+                    
+                    window.salesChart.update('none'); // Update without animation for performance
+                }
             }
         } catch (error) {
             console.error('Error updating sales chart:', error);

@@ -5,7 +5,7 @@ if (!process.env.NODE_ENV) {
 
 // Import Electron and other modules
 const electron = require('electron');
-const { app, BrowserWindow, ipcMain, dialog, session } = electron;
+const { app, BrowserWindow, ipcMain, dialog, session, Menu } = electron;
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
@@ -701,9 +701,10 @@ function registerIpcHandlers() {
           console.warn('suppliers table may not exist:', e.message);
         }
         
-        // Only delete settings that are not user_name (preserve user name)
+        // Delete all settings including user_name and setup_complete
+        // This will cause the installation wizard to show again on next launch
         try {
-          db.prepare('DELETE FROM settings WHERE key != ?').run('user_name');
+          db.prepare('DELETE FROM settings').run();
         } catch (e) {
           console.warn('settings table may not exist:', e.message);
         }
@@ -1048,6 +1049,7 @@ function registerIpcHandlers() {
     const now = new Date().toISOString();
     const saleDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     const saleId = `sale_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const invoiceNumber = `INV-${Date.now()}`;
     
     try {
       // Start a transaction
@@ -1060,7 +1062,7 @@ function registerIpcHandlers() {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           saleId,
-          `INV-${Date.now()}`,
+          invoiceNumber,
           saleDate,
           totalAmount,
           paymentMethod || 'cash',
@@ -1111,7 +1113,7 @@ function registerIpcHandlers() {
 
       // Execute the transaction
       transaction();
-      return { success: true, saleId };
+      return { success: true, saleId, invoice_number: invoiceNumber };
     } catch (error) {
       console.error('Error recording sale:', error);
       throw error;
@@ -1231,6 +1233,36 @@ function registerIpcHandlers() {
       }));
     } catch (error) {
       console.error('Error fetching sales by date range:', error);
+      throw error;
+    }
+  });
+
+  // Get sale items for a specific sale
+  ipcMain.handle('get-sale-items', async (event, { saleId }) => {
+    try {
+      if (!saleId) {
+        throw new Error('Sale ID is required');
+      }
+      
+      const items = db.prepare(`
+        SELECT si.*, 
+               p.total_bulk_cost, 
+               p.quantity_purchased,
+               p.cost_price,
+               p.selling_price
+        FROM sale_items si
+        LEFT JOIN products p ON si.product_id = p.id
+        WHERE si.sale_id = ?
+      `).all(saleId);
+      
+      return items.map(item => ({
+        ...item,
+        quantity: parseFloat(item.quantity || 0),
+        unit_price: parseFloat(item.unit_price || 0),
+        subtotal: parseFloat(item.subtotal || 0)
+      }));
+    } catch (error) {
+      console.error('Error fetching sale items:', error);
       throw error;
     }
   });
@@ -1943,6 +1975,7 @@ function createWindow() {
       minWidth: 500,
       minHeight: 700,
       icon: iconPath,
+      autoHideMenuBar: true, // Hide the menu bar
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -1959,6 +1992,9 @@ function createWindow() {
       backgroundColor: '#f8f9fa',
       show: false // Don't show until ready-to-show
     });
+    
+    // Remove the menu bar completely
+    Menu.setApplicationMenu(null);
     
     // Show window when ready to prevent flickering
     mainWindow.once('ready-to-show', () => {

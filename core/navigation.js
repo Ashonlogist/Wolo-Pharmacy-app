@@ -139,6 +139,16 @@ async function navigateTo(pageName, data = {}) {
             // Update active navigation
             updateActiveNav(actualPageName);
             
+            // Update page headers with shop name when navigating
+            if (typeof window.updatePageHeadersWithShopName === 'function') {
+                await window.updatePageHeadersWithShopName();
+            }
+            
+            // Re-initialize undo/redo buttons when navigating (in case buttons were recreated)
+            if (typeof window.initUndoRedo === 'function') {
+                window.initUndoRedo();
+            }
+            
             // Save to state if available
             if (state && state.set) {
                 state.set('currentPage', actualPageName);
@@ -149,23 +159,62 @@ async function navigateTo(pageName, data = {}) {
             try {
                 switch(actualPageName) {
                     case 'dashboard':
+                        // Only refresh dashboard data, don't re-initialize button (it's already initialized)
+                        // This prevents infinite loops
                         if (typeof window.refreshDashboard === 'function') {
-                            window.refreshDashboard(false); // Use cache if available when navigating
+                            // Use a small delay to prevent multiple rapid calls
+                            setTimeout(() => {
+                                window.refreshDashboard(false).catch(err => {
+                                    console.error('Error refreshing dashboard:', err);
+                                });
+                            }, 100);
                         }
                         break;
                     case 'products':
+                        // Re-populate category filter when navigating to products page
                         if (typeof window.loadProducts === 'function') {
                             window.loadProducts();
+                        } else {
+                            // If loadProducts is not available, try to update category filter directly
+                            setTimeout(async () => {
+                                if (typeof window.updateCategoryFilter === 'function') {
+                                    await window.updateCategoryFilter();
+                                }
+                            }, 200);
                         }
                         break;
                     case 'sales':
-                        // Sales page will auto-initialize on load
+                        // Re-populate product dropdown when navigating to sales page
+                        // Wait a bit to ensure the page is visible
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        if (typeof window.populateProductDropdown === 'function') {
+                            await window.populateProductDropdown();
+                        } else {
+                            // Try to import and call from sales.js module
+                            try {
+                                const salesModule = await import(`../pages/sales.js`);
+                                if (salesModule && typeof salesModule.populateProductDropdown === 'function') {
+                                    await salesModule.populateProductDropdown();
+                                }
+                            } catch (err) {
+                                console.warn('Could not populate sales product dropdown:', err);
+                            }
+                        }
                         break;
                     case 'reports':
                         // Reports page will auto-initialize on load
                         break;
                     case 'settings':
                         // Settings page will auto-initialize on load
+                        break;
+                    case 'product-form':
+                    case 'add-product':
+                        // Reload categories and suppliers when navigating to product form
+                        // Wait a bit to ensure the page is visible
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        if (typeof window.loadInitialData === 'function') {
+                            await window.loadInitialData();
+                        }
                         break;
                 }
             } catch (error) {

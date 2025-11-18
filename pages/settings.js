@@ -338,10 +338,11 @@ async function loadSettings() {
     try {
         const keys = [
             'user_name',
+            'shop_name',
+            'company_name',
             'developer_mode',
             'sound_enabled',
             'sound_volume',
-            'company_name',
             'company_address',
             'company_phone',
             'company_email',
@@ -374,6 +375,18 @@ async function loadSettings() {
                 // Update global user name
                 if (value && typeof window.updateUIWithUserName === 'function') {
                     window.updateUIWithUserName(value);
+                }
+            } else if (key === 'shop_name' || key === 'company_name') {
+                // Map shop_name or company_name to shopNameSetting input
+                // Use shop_name if available, otherwise fall back to company_name
+                const shopNameElement = document.getElementById('shopNameSetting');
+                if (shopNameElement) {
+                    // If shop_name exists, use it; otherwise use company_name
+                    if (key === 'shop_name' && value) {
+                        shopNameElement.value = value;
+                    } else if (key === 'company_name' && value && !shopNameElement.value) {
+                        shopNameElement.value = value;
+                    }
                 }
             } else {
                 const element = document.getElementById(key);
@@ -959,28 +972,53 @@ async function saveSoundSettings() {
 
 async function saveUserName() {
     const userNameInput = document.getElementById('userNameSetting');
+    const shopNameInput = document.getElementById('shopNameSetting');
+    
     if (!userNameInput) return;
     
     const userName = userNameInput.value.trim();
+    const shopName = shopNameInput?.value.trim() || '';
+    
     if (!userName) {
         showToast('Please enter your name', 'warning');
         return;
     }
     
     try {
-        const result = await handleIpcCall(settings.save, 'user_name', userName);
-        if (result?.success) {
-            showToast(`Name updated to ${userName}!`, 'success');
+        // Save user name
+        const userNameResult = await handleIpcCall(settings.save, 'user_name', userName);
+        
+        // Save shop name if provided
+        let shopNameResult = { success: true };
+        if (shopName) {
+            shopNameResult = await handleIpcCall(settings.save, 'shop_name', shopName);
+            // Also save to company_name for backward compatibility
+            if (shopNameResult?.success) {
+                await handleIpcCall(settings.save, 'company_name', shopName);
+            }
+        }
+        
+        if (userNameResult?.success && shopNameResult?.success) {
+            const message = shopName 
+                ? `Profile updated! Name: ${userName}, Shop: ${shopName}` 
+                : `Name updated to ${userName}!`;
+            showToast(message, 'success');
+            
             // Update global user name
             if (typeof window.updateUIWithUserName === 'function') {
                 window.updateUIWithUserName(userName);
             }
+            
+            // Update page headers with new shop name
+            if (shopName && typeof window.updatePageHeadersWithShopName === 'function') {
+                await window.updatePageHeadersWithShopName();
+            }
         } else {
-            showToast('Failed to save name. Please try again.', 'danger');
+            showToast('Failed to save profile. Please try again.', 'danger');
         }
     } catch (error) {
-        console.error('Error saving user name:', error);
-        showToast('Failed to save name: ' + error.message, 'danger');
+        console.error('Error saving profile:', error);
+        showToast('Failed to save profile: ' + error.message, 'danger');
     }
 }
 
